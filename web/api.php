@@ -45,6 +45,32 @@ if ($action === 'chart') {
     narcissus_json([
         'ok' => true,
         'chart' => narcissus_chart_data($pages, $from, $to),
+        'heatmap_intensity_max' => narcissus_heatmap_intensity_max(),
+    ]);
+}
+
+if ($action === 'heatmap') {
+    $page = narcissus_page_by_id((string) ($_GET['page'] ?? ''), $pages);
+    if ($page === null) {
+        narcissus_json(['ok' => false, 'error' => 'Onbekende pagina'], 404);
+    }
+
+    $cols = max(1, (int) ($_GET['cols'] ?? 0));
+    $range = narcissus_heatmap_date_range($cols);
+    $days = narcissus_heatmap_days((string) $page['path'], $range['from'], $range['to'], (string) $page['id']);
+    narcissus_json([
+        'ok' => true,
+        'page' => [
+            'id' => (string) $page['id'],
+            'name' => (string) $page['name'],
+        ],
+        'from' => $range['from'],
+        'to' => $range['to'],
+        'cols' => $range['cols'],
+        'rows' => $range['rows'],
+        'days' => $days,
+        'heatmap_intensity_max' => narcissus_heatmap_intensity_max(),
+        'heatmap_over_limit_multiplier' => narcissus_heatmap_over_limit_multiplier(),
     ]);
 }
 

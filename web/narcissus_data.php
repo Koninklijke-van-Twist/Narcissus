@@ -5,6 +5,13 @@
  */
 
 const NARCISSUS_TIMEZONE = 'Europe/Amsterdam';
+const NARCISSUS_HEATMAP_INTENSITY_MAX = 250;
+const NARCISSUS_HEATMAP_OVER_LIMIT_MULTIPLIER = 5;
+const NARCISSUS_HEATMAP_CELL_PX = 14;
+const NARCISSUS_HEATMAP_CELL_GAP = 2;
+const NARCISSUS_HEATMAP_CELL_RADIUS = 2;
+const NARCISSUS_HEATMAP_ROWS = 5;
+const NARCISSUS_HEATMAP_CACHE_DAYS = 500;
 
 /**
  * Functies
@@ -226,6 +233,325 @@ function narcissus_relative_timestamp(int $days): int
     return time() - ($days * 86400);
 }
 
+function narcissus_heatmap_intensity_max(): int
+{
+    global $heatmapIntensityMax;
+
+    if (isset($heatmapIntensityMax) && is_numeric($heatmapIntensityMax)) {
+        $value = (int) $heatmapIntensityMax;
+        if ($value > 0) {
+            return $value;
+        }
+    }
+
+    return NARCISSUS_HEATMAP_INTENSITY_MAX;
+}
+
+function narcissus_heatmap_over_limit_multiplier(): int
+{
+    return max(1, NARCISSUS_HEATMAP_OVER_LIMIT_MULTIPLIER);
+}
+
+function narcissus_heatmap_rows(): int
+{
+    return max(1, NARCISSUS_HEATMAP_ROWS);
+}
+
+/**
+ * @return array{from: string, to: string, cols: int, rows: int}
+ */
+function narcissus_heatmap_date_range(int $cols, ?int $rows = null): array
+{
+    $colCount = max(1, $cols);
+    $rowCount = max(1, $rows ?? narcissus_heatmap_rows());
+    $to = new DateTimeImmutable('today', narcissus_timezone());
+    $from = $to->modify('-' . (($colCount * $rowCount) - 1) . ' days');
+
+    return [
+        'from' => $from->format('Y-m-d'),
+        'to' => $to->format('Y-m-d'),
+        'cols' => $colCount,
+        'rows' => $rowCount,
+    ];
+}
+
+function narcissus_heatmap_cache_dir(): string
+{
+    return __DIR__ . '/cache/heatmap';
+}
+
+function narcissus_heatmap_yesterday(): string
+{
+    return (new DateTimeImmutable('today', narcissus_timezone()))
+        ->modify('-1 day')
+        ->format('Y-m-d');
+}
+
+function narcissus_heatmap_cache_page_id(string $pageId): string
+{
+    $normalized = narcissus_page_id($pageId);
+    $safe = preg_replace('/[^a-z0-9_-]/', '_', $normalized);
+    return is_string($safe) && $safe !== '' ? $safe : 'page';
+}
+
+function narcissus_heatmap_cache_path(string $pageId): string
+{
+    return narcissus_heatmap_cache_dir() . '/' . narcissus_heatmap_cache_page_id($pageId) . '.json';
+}
+
+function narcissus_heatmap_cache_ensure_dir(): bool
+{
+    $dir = narcissus_heatmap_cache_dir();
+    if (is_dir($dir)) {
+        return true;
+    }
+
+    return @mkdir($dir, 0775, true) || is_dir($dir);
+}
+
+/**
+ * @return array{intensity_max: int, through_date: string, counts: array<string, int>}|null
+ */
+function narcissus_heatmap_cache_read(string $pageId): ?array
+{
+    $path = narcissus_heatmap_cache_path($pageId);
+    if (!is_file($path) || !is_readable($path)) {
+        return null;
+    }
+
+    $raw = file_get_contents($path);
+    if (!is_string($raw) || $raw === '') {
+        return null;
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+
+    $counts = $decoded['counts'] ?? null;
+    if (!is_array($counts)) {
+        return null;
+    }
+
+    $normalizedCounts = [];
+    foreach ($counts as $date => $count) {
+        $day = narcissus_parse_date((string) $date);
+        if ($day === '') {
+            continue;
+        }
+        $normalizedCounts[$day] = (int) $count;
+    }
+
+    return [
+        'intensity_max' => (int) ($decoded['intensity_max'] ?? 0),
+        'through_date' => narcissus_parse_date((string) ($decoded['through_date'] ?? '')),
+        'counts' => $normalizedCounts,
+    ];
+}
+
+/**
+ * @param array<string, int> $counts
+ */
+function narcissus_heatmap_cache_write(string $pageId, array $counts, string $throughDate): bool
+{
+    if (!narcissus_heatmap_cache_ensure_dir()) {
+        return false;
+    }
+
+    $payload = [
+        'intensity_max' => narcissus_heatmap_intensity_max(),
+        'through_date' => $throughDate,
+        'generated_at' => (new DateTimeImmutable('now', narcissus_timezone()))->format('c'),
+        'counts' => $counts,
+    ];
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($json)) {
+        return false;
+    }
+
+    return @file_put_contents(narcissus_heatmap_cache_path($pageId), $json) !== false;
+}
+
+/**
+ * @param array{intensity_max: int, through_date: string, counts: array<string, int>}|null $cache
+ */
+function narcissus_heatmap_cache_is_valid(?array $cache): bool
+{
+    if ($cache === null) {
+        return false;
+    }
+
+    if ((int) ($cache['intensity_max'] ?? 0) !== narcissus_heatmap_intensity_max()) {
+        return false;
+    }
+
+    $through = (string) ($cache['through_date'] ?? '');
+    return $through !== '' && $through <= narcissus_heatmap_yesterday();
+}
+
+/**
+ * @return array<string, int>
+ */
+function narcissus_heatmap_cache_rebuild(string $path, string $pageId, string $throughDate): array
+{
+    $through = narcissus_parse_date($throughDate);
+    if ($through === '') {
+        $through = narcissus_heatmap_yesterday();
+    }
+
+    $from = (new DateTimeImmutable($through . ' 00:00:00', narcissus_timezone()))
+        ->modify('-' . (max(1, NARCISSUS_HEATMAP_CACHE_DAYS) - 1) . ' days')
+        ->format('Y-m-d');
+    $counts = narcissus_page_counts_by_day($path, $from, $through);
+    narcissus_heatmap_cache_write($pageId, $counts, $through);
+
+    return $counts;
+}
+
+/**
+ * @return array<string, int>
+ */
+function narcissus_heatmap_counts_for_range(string $path, string $from, string $to, string $pageId = ''): array
+{
+    if ($pageId === '') {
+        return narcissus_page_counts_by_day($path, $from, $to);
+    }
+
+    $labels = narcissus_day_labels($from, $to);
+    $counts = array_fill_keys($labels, 0);
+    $cache = narcissus_heatmap_cache_read($pageId);
+
+    if (!narcissus_heatmap_cache_is_valid($cache)) {
+        $through = narcissus_heatmap_yesterday();
+        $rebuilt = narcissus_heatmap_cache_rebuild($path, $pageId, $through);
+        $cache = [
+            'intensity_max' => narcissus_heatmap_intensity_max(),
+            'through_date' => $through,
+            'counts' => $rebuilt,
+        ];
+    }
+
+    if (!narcissus_heatmap_cache_is_valid($cache)) {
+        return narcissus_page_counts_by_day($path, $from, $to);
+    }
+
+    $through = (string) ($cache['through_date'] ?? '');
+    $cachedCounts = is_array($cache['counts'] ?? null) ? $cache['counts'] : [];
+    foreach ($labels as $date) {
+        if ($date <= $through) {
+            $counts[$date] = (int) ($cachedCounts[$date] ?? 0);
+        }
+    }
+
+    $liveFrom = (new DateTimeImmutable($through . ' 00:00:00', narcissus_timezone()))
+        ->modify('+1 day')
+        ->format('Y-m-d');
+    if ($liveFrom < $from) {
+        $liveFrom = $from;
+    }
+
+    if ($liveFrom <= $to) {
+        $liveCounts = narcissus_page_counts_by_day($path, $liveFrom, $to);
+        foreach ($liveCounts as $date => $count) {
+            $counts[$date] = (int) $count;
+        }
+    }
+
+    return $counts;
+}
+
+/**
+ * @param list<array{id: string, name: string, path: string}> $pages
+ * @return array{pages: int, written: int, through_date: string, intensity_max: int}
+ */
+function narcissus_heatmap_cache_rebuild_all(?array $pages = null): array
+{
+    $pages = $pages ?? narcissus_discover_pages();
+    $through = narcissus_heatmap_yesterday();
+    $written = 0;
+
+    foreach ($pages as $page) {
+        $pageId = (string) ($page['id'] ?? '');
+        $path = (string) ($page['path'] ?? '');
+        if ($pageId === '' || $path === '') {
+            continue;
+        }
+
+        narcissus_heatmap_cache_rebuild($path, $pageId, $through);
+        $written++;
+    }
+
+    return [
+        'pages' => count($pages),
+        'written' => $written,
+        'through_date' => $through,
+        'intensity_max' => narcissus_heatmap_intensity_max(),
+    ];
+}
+
+/**
+ * @return array<string, int>
+ */
+function narcissus_page_counts_by_day(string $path, string $from, string $to): array
+{
+    $labels = narcissus_day_labels($from, $to);
+    $counts = array_fill_keys($labels, 0);
+    $fromTs = narcissus_day_bounds($from, false);
+    $toTs = narcissus_day_bounds($to, true);
+
+    try {
+        $pdo = narcissus_pdo($path);
+        $statement = $pdo->prepare(
+            'SELECT visited_at
+             FROM visits
+             WHERE visited_at >= :from_ts AND visited_at <= :to_ts'
+        );
+        $statement->execute([
+            ':from_ts' => $fromTs,
+            ':to_ts' => $toTs,
+        ]);
+
+        $tz = narcissus_timezone();
+        while ($row = $statement->fetch()) {
+            $timestamp = (int) ($row['visited_at'] ?? 0);
+            if ($timestamp <= 0) {
+                continue;
+            }
+            $day = (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz)->format('Y-m-d');
+            if (isset($counts[$day])) {
+                $counts[$day]++;
+            }
+        }
+    } catch (Throwable) {
+        return $counts;
+    }
+
+    return $counts;
+}
+
+/**
+ * @return list<array{date: string, count: int, future: bool, out_of_range: bool}>
+ */
+function narcissus_heatmap_days(string $path, string $from, string $to, string $pageId = ''): array
+{
+    $counts = narcissus_heatmap_counts_for_range($path, $from, $to, $pageId);
+    $today = (new DateTimeImmutable('today', narcissus_timezone()))->format('Y-m-d');
+    $days = [];
+
+    foreach (narcissus_day_labels($from, $to) as $date) {
+        $isFuture = $date > $today;
+        $days[] = [
+            'date' => $date,
+            'count' => $isFuture ? 0 : (int) ($counts[$date] ?? 0),
+            'future' => $isFuture,
+            'out_of_range' => false,
+        ];
+    }
+
+    return $days;
+}
+
 function narcissus_format_datetime(?int $timestamp): string
 {
     if ($timestamp === null || $timestamp <= 0) {
@@ -244,39 +570,10 @@ function narcissus_format_datetime(?int $timestamp): string
 function narcissus_chart_data(array $pages, string $from, string $to): array
 {
     $labels = narcissus_day_labels($from, $to);
-    $fromTs = narcissus_day_bounds($from, false);
-    $toTs = narcissus_day_bounds($to, true);
     $series = [];
 
     foreach ($pages as $page) {
-        $counts = array_fill_keys($labels, 0);
-        try {
-            $pdo = narcissus_pdo((string) $page['path']);
-            $statement = $pdo->prepare(
-                'SELECT visited_at
-                 FROM visits
-                 WHERE visited_at >= :from_ts AND visited_at <= :to_ts'
-            );
-            $statement->execute([
-                ':from_ts' => $fromTs,
-                ':to_ts' => $toTs,
-            ]);
-
-            $tz = narcissus_timezone();
-            while ($row = $statement->fetch()) {
-                $timestamp = (int) ($row['visited_at'] ?? 0);
-                if ($timestamp <= 0) {
-                    continue;
-                }
-                $day = (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz)->format('Y-m-d');
-                if (isset($counts[$day])) {
-                    $counts[$day]++;
-                }
-            }
-        } catch (Throwable) {
-            $counts = array_fill_keys($labels, 0);
-        }
-
+        $counts = narcissus_page_counts_by_day((string) $page['path'], $from, $to);
         $series[] = [
             'id' => (string) $page['id'],
             'name' => (string) $page['name'],
