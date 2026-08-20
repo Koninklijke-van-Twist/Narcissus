@@ -214,7 +214,7 @@ if (!is_string($topJson)) {
         @media (min-width: 700px) {
             .narc-page { padding: 20px 20px 36px; }
             .narc-form--dates { grid-template-columns: 1fr 1fr; }
-            .narc-chart-wrap { height: 360px; }
+            .narc-chart-wrap { height: 800px; }
         }
     </style>
 </head>
