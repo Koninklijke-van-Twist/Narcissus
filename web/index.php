@@ -104,6 +104,15 @@ if (!is_string($topJson)) {
             color: var(--kvt-perkins-blue);
             font-size: 1.12rem;
         }
+        .narc-card h3 {
+            margin: 0 0 10px;
+            color: var(--kvt-perkins-blue);
+            font-size: 0.98rem;
+        }
+        .narc-rank-grid {
+            display: grid;
+            gap: 18px;
+        }
         .narc-subtitle { color: var(--kvt-muted); margin: 8px 0 0; max-width: 46rem; }
         .narc-muted { color: var(--kvt-muted); font-size: 0.92rem; }
         .narc-form {
@@ -215,6 +224,7 @@ if (!is_string($topJson)) {
             .narc-page { padding: 20px 20px 36px; }
             .narc-form--dates { grid-template-columns: 1fr 1fr; }
             .narc-chart-wrap { height: 800px; }
+            .narc-rank-grid { grid-template-columns: 1fr 1fr; gap: 24px; }
         }
     </style>
 </head>
@@ -315,6 +325,40 @@ if (!is_string($topJson)) {
             </table>
         </div>
     </section>
+
+    <section class="narc-card">
+        <h2>Pagina’s in de gekozen periode</h2>
+        <div class="narc-rank-grid">
+            <div>
+                <h3>Top 5 meest gebruikt</h3>
+                <div class="narc-table-wrap">
+                    <table class="narc-table">
+                        <thead>
+                            <tr>
+                                <th>Pagina</th>
+                                <th class="num">Bezoeken</th>
+                            </tr>
+                        </thead>
+                        <tbody id="narc-rank-most-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div>
+                <h3>Top 5 minst gebruikt</h3>
+                <div class="narc-table-wrap">
+                    <table class="narc-table">
+                        <thead>
+                            <tr>
+                                <th>Pagina</th>
+                                <th class="num">Bezoeken</th>
+                            </tr>
+                        </thead>
+                        <tbody id="narc-rank-least-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
 </div>
 <script>
 (function () {
@@ -342,6 +386,8 @@ if (!is_string($topJson)) {
     const searchStatus = document.getElementById('narc-search-status');
     const topBody = document.getElementById('narc-top-body');
     const searchBody = document.getElementById('narc-search-body');
+    const rankMostBody = document.getElementById('narc-rank-most-body');
+    const rankLeastBody = document.getElementById('narc-rank-least-body');
     const heatmapGrid = document.getElementById('narc-heatmap-grid');
     const canvas = document.getElementById('narc-chart');
     const chartLegend = document.getElementById('narc-chart-legend');
@@ -608,6 +654,59 @@ if (!is_string($topJson)) {
         }, 0);
     }
 
+    function seriesRows(series) {
+        return (series || []).map(function (item) {
+            return {
+                id: String(item.id || item.name || ''),
+                name: item.name || item.id || 'Pagina',
+                hits: seriesTotal(item)
+            };
+        }).filter(function (item) {
+            return item.id !== '';
+        });
+    }
+
+    function renderRankTable(tbody, rows, emptyMessage) {
+        if (!tbody) {
+            return;
+        }
+        tbody.replaceChildren();
+        if (!rows.length) {
+            tbody.appendChild(emptyRow(2, emptyMessage));
+            return;
+        }
+        rows.forEach(function (row) {
+            const tr = document.createElement('tr');
+            const nameCell = document.createElement('td');
+            nameCell.textContent = row.name;
+            const hitsCell = document.createElement('td');
+            hitsCell.className = 'num';
+            hitsCell.textContent = Number(row.hits || 0).toLocaleString('nl-NL');
+            tr.appendChild(nameCell);
+            tr.appendChild(hitsCell);
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderPageRankings(series) {
+        const rows = seriesRows(series);
+        const most = rows.slice().sort(function (left, right) {
+            if (right.hits !== left.hits) {
+                return right.hits - left.hits;
+            }
+            return left.name.localeCompare(right.name, 'nl');
+        }).slice(0, 5);
+        const least = rows.slice().sort(function (left, right) {
+            if (left.hits !== right.hits) {
+                return left.hits - right.hits;
+            }
+            return left.name.localeCompare(right.name, 'nl');
+        }).slice(0, 5);
+        const empty = pages.length ? 'Geen pagina’s gevonden.' : 'Nog geen analytics-databases gevonden.';
+        renderRankTable(rankMostBody, most, empty);
+        renderRankTable(rankLeastBody, least, empty);
+    }
+
     function medalBySeriesId(series) {
         const medals = ['🥇', '🥈', '🥉'];
         const ranked = (series || [])
@@ -705,11 +804,12 @@ if (!is_string($topJson)) {
     }
 
     function renderChart(payload) {
+        const labels = (payload && payload.labels) ? payload.labels : [];
+        const series = (payload && payload.series) ? payload.series : [];
+        renderPageRankings(series);
         if (!canvas || typeof Chart === 'undefined') {
             return;
         }
-        const labels = (payload && payload.labels) ? payload.labels : [];
-        const series = (payload && payload.series) ? payload.series : [];
         const hidden = hiddenDatasetsByPageId();
         const datasets = chartDatasets(series).map(function (dataset) {
             dataset.hidden = !!hidden[String(dataset.pageId || '')];
