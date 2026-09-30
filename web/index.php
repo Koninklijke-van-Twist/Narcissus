@@ -330,7 +330,7 @@ if (!is_string($topJson)) {
         <h2>Pagina’s in de gekozen periode</h2>
         <div class="narc-rank-grid">
             <div>
-                <h3>Top 5 meest gebruikt</h3>
+                <h3>Top <?= (int) NARCISSUS_PAGE_RANK_LIMIT ?> meest gebruikt</h3>
                 <div class="narc-table-wrap">
                     <table class="narc-table">
                         <thead>
@@ -344,7 +344,7 @@ if (!is_string($topJson)) {
                 </div>
             </div>
             <div>
-                <h3>Top 5 minst gebruikt</h3>
+                <h3>Top <?= (int) NARCISSUS_PAGE_RANK_LIMIT ?> minst gebruikt</h3>
                 <div class="narc-table-wrap">
                     <table class="narc-table">
                         <thead>
@@ -360,6 +360,7 @@ if (!is_string($topJson)) {
         </div>
     </section>
 </div>
+<script src="heatmap_layout.js"></script>
 <script>
 (function () {
     const pages = <?= $pagesJson ?>;
@@ -372,6 +373,9 @@ if (!is_string($topJson)) {
     const heatmapCellGap = <?= (int) NARCISSUS_HEATMAP_CELL_GAP ?>;
     const heatmapCellRadius = <?= (int) NARCISSUS_HEATMAP_CELL_RADIUS ?>;
     const heatmapRows = <?= (int) NARCISSUS_HEATMAP_ROWS ?>;
+    const pageRankLimit = <?= (int) NARCISSUS_PAGE_RANK_LIMIT ?>;
+    const heatmapWeekdayGutter = 28;
+    const heatmapMonthBand = 16;
     const palette = [
         '#00529B', '#0099cc', '#0f766e', '#b45309', '#7c3aed',
         '#be123c', '#15803d', '#0369a1', '#c2410c', '#334155'
@@ -578,21 +582,8 @@ if (!is_string($topJson)) {
 
     function heatmapColumnsForWidth(width) {
         const stride = heatmapCellPx + heatmapCellGap;
-        return Math.max(1, Math.floor((width + heatmapCellGap) / stride));
-    }
-
-    function layoutHeatmapDays(days, cols, rows) {
-        const needed = Math.max(1, cols) * Math.max(1, rows);
-        const list = Array.isArray(days) ? days.slice(0, needed) : [];
-        while (list.length < needed) {
-            list.push({
-                date: '',
-                count: 0,
-                future: false,
-                out_of_range: true
-            });
-        }
-        return list;
+        const available = Math.max(0, width - heatmapWeekdayGutter);
+        return Math.max(1, Math.floor((available + heatmapCellGap) / stride));
     }
 
     function renderHeatmap(days) {
@@ -607,21 +598,42 @@ if (!is_string($topJson)) {
 
         const width = heatmapGridWidth();
         const cols = heatmapColumnsForWidth(width);
-        const list = layoutHeatmapDays(heatmapDays, cols, heatmapRows);
         const rows = heatmapRows;
         const cellPx = heatmapCellPx;
         const gapPx = heatmapCellGap;
-        const svgWidth = (cols * cellPx) + ((cols - 1) * gapPx);
-        const svgHeight = (rows * cellPx) + ((rows - 1) * gapPx);
+        const gutter = heatmapWeekdayGutter;
+        const monthBand = heatmapMonthBand;
+        const cells = NarcissusHeatmap.layoutHeatmapCells(heatmapDays, cols, rows);
+        if (!cells.length) {
+            heatmapGrid.replaceChildren();
+            return;
+        }
+        const monthLabels = NarcissusHeatmap.monthLabelsForCells(cells, cols);
+        const weekdayLabels = NarcissusHeatmap.weekdayAxisLabels(rows);
+        const stride = cellPx + gapPx;
+        const svgWidth = gutter + (cols * cellPx) + ((cols - 1) * gapPx);
+        const svgHeight = monthBand + (rows * cellPx) + ((rows - 1) * gapPx);
         const todayKey = todayDateKey();
         const pad = heatmapSvgPad;
         let shapes = '';
 
-        list.forEach(function (day, index) {
-            const col = index % cols;
-            const row = Math.floor(index / cols);
-            const x = col * (cellPx + gapPx);
-            const y = row * (cellPx + gapPx);
+        monthLabels.forEach(function (label) {
+            const x = gutter + (label.col * stride);
+            shapes += '<text x="' + x + '" y="11" text-anchor="start" fill="#475569" font-size="10"'
+                + ' font-family="Montserrat, Segoe UI, Arial, sans-serif" pointer-events="none" aria-hidden="true">'
+                + escapeHtml(label.text) + '</text>';
+        });
+        weekdayLabels.forEach(function (label) {
+            const y = monthBand + (label.row * stride) + (cellPx / 2);
+            shapes += '<text x="' + (gutter - 6) + '" y="' + y + '" text-anchor="end" dominant-baseline="middle"'
+                + ' fill="#475569" font-size="10" font-family="Montserrat, Segoe UI, Arial, sans-serif"'
+                + ' pointer-events="none" aria-hidden="true">' + escapeHtml(label.text) + '</text>';
+        });
+
+        cells.forEach(function (cell) {
+            const day = cell.day || {};
+            const x = gutter + (cell.col * stride);
+            const y = monthBand + (cell.row * stride);
             const inactive = !!day.future || !!day.out_of_range || !day.date;
             const count = Number(day.count || 0);
             const isToday = String(day.date || '') === todayKey && !inactive;
@@ -695,13 +707,13 @@ if (!is_string($topJson)) {
                 return right.hits - left.hits;
             }
             return left.name.localeCompare(right.name, 'nl');
-        }).slice(0, 5);
+        }).slice(0, pageRankLimit);
         const least = rows.slice().sort(function (left, right) {
             if (left.hits !== right.hits) {
                 return left.hits - right.hits;
             }
             return left.name.localeCompare(right.name, 'nl');
-        }).slice(0, 5);
+        }).slice(0, pageRankLimit);
         const empty = pages.length ? 'Geen pagina’s gevonden.' : 'Nog geen analytics-databases gevonden.';
         renderRankTable(rankMostBody, most, empty);
         renderRankTable(rankLeastBody, least, empty);
@@ -824,7 +836,12 @@ if (!is_string($topJson)) {
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { display: false }
+                legend: { display: false },
+                tooltip: {
+                    itemSort: function (left, right) {
+                        return NarcissusHeatmap.compareTooltipActivity(left, right);
+                    }
+                }
             },
             scales: {
                 x: {

@@ -10,8 +10,9 @@ const NARCISSUS_HEATMAP_OVER_LIMIT_MULTIPLIER = 5;
 const NARCISSUS_HEATMAP_CELL_PX = 14;
 const NARCISSUS_HEATMAP_CELL_GAP = 2;
 const NARCISSUS_HEATMAP_CELL_RADIUS = 2;
-const NARCISSUS_HEATMAP_ROWS = 5;
+const NARCISSUS_HEATMAP_ROWS = 7;
 const NARCISSUS_HEATMAP_CACHE_DAYS = 500;
+const NARCISSUS_PAGE_RANK_LIMIT = 20;
 
 /**
  * Functies
@@ -258,14 +259,29 @@ function narcissus_heatmap_rows(): int
 }
 
 /**
+ * Venster voor de heatmap: elke kolom is één ISO-week (maandag t/m zondag).
+ * De rechterkolom is de week van $today; oudere weken staan links daarvan.
+ * Met 7 rijen valt maandag op de bovenste rij en zondag op de onderste.
+ *
  * @return array{from: string, to: string, cols: int, rows: int}
  */
-function narcissus_heatmap_date_range(int $cols, ?int $rows = null): array
+function narcissus_heatmap_date_range(int $cols, ?int $rows = null, ?DateTimeImmutable $today = null): array
 {
     $colCount = max(1, $cols);
     $rowCount = max(1, $rows ?? narcissus_heatmap_rows());
-    $to = new DateTimeImmutable('today', narcissus_timezone());
-    $from = $to->modify('-' . (($colCount * $rowCount) - 1) . ' days');
+    $zone = narcissus_timezone();
+    if (!$today instanceof DateTimeImmutable) {
+        $today = new DateTimeImmutable('today', $zone);
+    } else {
+        $today = $today->setTimezone($zone)->setTime(0, 0, 0);
+    }
+
+    $weekMonday = $today->modify('-' . ((int) $today->format('N') - 1) . ' days');
+    $from = $weekMonday;
+    if ($colCount > 1) {
+        $from = $weekMonday->modify('-' . (($colCount - 1) * $rowCount) . ' days');
+    }
+    $to = $weekMonday->modify('+' . ($rowCount - 1) . ' days');
 
     return [
         'from' => $from->format('Y-m-d'),
