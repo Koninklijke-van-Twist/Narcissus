@@ -75,7 +75,7 @@ function narcissus_mimir_http_post(string $url, string $apiKey, string $payload)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_FOLLOWLOCATION => false, // geen redirects: de API-sleutel mag nooit naar een andere host
         CURLOPT_CONNECTTIMEOUT => NARCISSUS_MIMIR_CONNECT_TIMEOUT,
         CURLOPT_TIMEOUT => NARCISSUS_MIMIR_TIMEOUT,
         CURLOPT_POST => true,
