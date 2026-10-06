@@ -18,6 +18,8 @@ Bronnen, alleen lezen via Mímir (`POST /mimir/api/query.php`, `top: 0`):
 
 - Join: `UserTimeRegisters.User_ID` = `Users.User_Name` (hoofdletterongevoelig, getrimd). Minuten per gebruiker per dag worden over de drie bedrijven opgeteld.
 - Alleen `State` = Enabled en `License_Type` in Full User, Limited User, Device Only User.
+- Mímir vraagt BC op met `Accept-Language: nl-NL`. BC geeft optievelden dan als Nederlandse caption terug: `State` = `Geactiveerd`/`Gedeactiveerd`, `License_Type` = `Volwaardige gebruiker` (live, okt 2026; in `$metadata` zijn beide gewoon `Edm.String`). Narcissus vergelijkt daarom genormaliseerd: `_xHHHH_` gedecodeerd (`Full_x0020_User`), `_`/`-` als spatie, hoofdletterongevoelig, Engels én Nederlands (`Beperkte gebruiker`, captions met `apparaat` = Device Only User). Kolomnamen worden ook hoofdletterongevoelig gezocht. Opgeslagen licentietype is altijd de Engelse naam.
+- Nightly-diagnose (anoniem, geen namen/e-mails): `users_rows=… named=… enabled=… licensed=… state_values=Geactiveerd:153,… license_values=Volwaardige gebruiker:199`. Is `licensed` 0 terwijl er rijen zijn, dan volgt `users_columns=…` (kolomnamen van de eerste rij), krijgt `Users` de status `geen_licenties` (melding op de tab) en blijven de vorige gegevens staan (nightly `ONVOLLEDIG`, HTTP 500).
 - Venster: 26 hele weken t/m de huidige week (`NARCISSUS_BC_USAGE_WINDOW_WEEKS`). Filter naar Mímir: `Date ge <vensterbegin>` als filterboom (Mímir maakt er `Date ge 2026-04-13` van, Edm.Date zonder quotes).
 - Minuten zijn **inclusief idle-tijd** en tellen alleen waar **Register Time** aan staat. Een dag kan boven 24 uur uitkomen (sessie over meerdere dagen open, of meerdere bedrijven tegelijk); live is dat ~6% van de actieve dagen.
 - Weinig gebruik: minder dan 4 actieve dagen in de laatste 30 dagen, of laatste registratie meer dan 30 dagen geleden. Drempels staan als constanten in `web/bc_usage.php`.
@@ -41,6 +43,7 @@ Niet in git. Kopieer `web/auth_TEMPLATE.php` naar `web/auth.php` en vul `$allowe
 php tests/heatmap_range_test.php
 node tests/heatmap_layout_smoke.js
 php tests/bc_usage_test.php
+php tests/bc_usage_mimir_format_test.php   # Users in Mímir-formaat (nl-NL captions, _x0020_, diagnose)
 node tests/bc_usage_smoke.js
 php tests/bc_usage_access_test.php   # start php -S op een tijdelijke kopie van web/
 ```
