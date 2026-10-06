@@ -9,12 +9,37 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/logincheck.php';
 require_once __DIR__ . '/narcissus_data.php';
+require_once __DIR__ . '/bc_usage.php';
 
 /**
  * Page load
  */
 
 $action = strtolower(trim((string) ($_GET['action'] ?? '')));
+
+// BC Gebruik: logintijden zijn persoonsgegevens, dus alleen voor beheerders.
+if ($action === 'bcgebruik' || $action === 'bcgebruik_heatmap') {
+    narcissus_require_admin_json();
+    $bcUsageData = narcissus_bc_usage_read();
+
+    if ($action === 'bcgebruik') {
+        narcissus_json([
+            'ok' => true,
+            'summary' => narcissus_bc_usage_summary($bcUsageData),
+        ]);
+    }
+
+    $heatmap = narcissus_bc_usage_user_heatmap($bcUsageData, (string) ($_GET['user'] ?? ''));
+    if ($heatmap === null) {
+        narcissus_json(['ok' => false, 'error' => 'Onbekende gebruiker'], 404);
+    }
+
+    narcissus_json([
+        'ok' => true,
+        'heatmap' => $heatmap,
+    ]);
+}
+
 $pages = narcissus_discover_pages();
 
 if ($action === 'pages') {
