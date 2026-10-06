@@ -9,6 +9,7 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/logincheck.php';
 require_once __DIR__ . '/narcissus_data.php';
+require_once __DIR__ . '/bc_usage.php';
 
 /**
  * Page load
@@ -64,82 +65,14 @@ if (!is_string($topJson)) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Narcissus — Pagina-activiteit</title>
     <link rel="stylesheet" href="brand.css">
+    <link rel="stylesheet" href="narcissus.css">
     <link rel="manifest" href="site.webmanifest">
     <link rel="icon" href="favicon.ico">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
-        * { box-sizing: border-box; }
-        body { margin: 0; }
-        .narc-page { max-width: 1120px; margin: 0 auto; padding: 16px 16px 32px; }
-        .narc-header {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 20px;
-            padding-bottom: 14px;
-            border-bottom: 3px solid var(--kvt-main-blue);
-        }
-        .narc-header img { max-height: 48px; width: auto; }
-        .narc-card {
-            background: var(--kvt-panel-bg);
-            border: 1px solid var(--kvt-line);
-            border-radius: 14px;
-            padding: 16px 18px;
-            margin-bottom: 16px;
-            box-shadow: 0 10px 28px rgba(0, 82, 155, 0.08);
-        }
-        .narc-card--hero {
-            border-top: 4px solid var(--kvt-perkins-blue);
-            background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
-        }
-        .narc-card h1.brand-display {
-            margin: 0;
-            color: var(--kvt-perkins-blue);
-            font-size: clamp(1.4rem, 3vw, 1.85rem);
-        }
-        .narc-card h2 {
-            margin: 0 0 12px;
-            color: var(--kvt-perkins-blue);
-            font-size: 1.12rem;
-        }
-        .narc-card h3 {
-            margin: 0 0 10px;
-            color: var(--kvt-perkins-blue);
-            font-size: 0.98rem;
-        }
         .narc-rank-grid {
             display: grid;
             gap: 18px;
-        }
-        .narc-subtitle { color: var(--kvt-muted); margin: 8px 0 0; max-width: 46rem; }
-        .narc-muted { color: var(--kvt-muted); font-size: 0.92rem; }
-        .narc-form {
-            display: grid;
-            gap: 12px;
-            margin-top: 16px;
-        }
-        .narc-form label {
-            display: grid;
-            gap: 6px;
-            font-weight: 700;
-            color: var(--kvt-perkins-blue);
-            font-size: 0.9rem;
-        }
-        .narc-form input,
-        .narc-form select {
-            font: inherit;
-            width: 100%;
-            border-radius: 10px;
-            border: 1px solid var(--kvt-line);
-            padding: 12px 14px;
-            background: #fff;
-        }
-        .narc-form input:focus,
-        .narc-form select:focus {
-            outline: 2px solid rgba(0, 153, 204, 0.35);
-            border-color: var(--kvt-main-blue);
         }
         .narc-chart-wrap { position: relative; height: 280px; width: 100%; margin-top: 12px; }
         .narc-chart-legend {
@@ -179,49 +112,7 @@ if (!is_string($topJson)) {
         .narc-legend-label {
             font-size: 0.92rem;
         }
-        .narc-empty {
-            border: 1px dashed var(--kvt-line);
-            border-radius: 10px;
-            padding: 20px 14px;
-            color: var(--kvt-muted);
-            text-align: center;
-        }
-        .narc-table-wrap { overflow-x: auto; }
-        table.narc-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.92rem;
-        }
-        table.narc-table th,
-        table.narc-table td {
-            padding: 10px 8px;
-            border-bottom: 1px solid var(--kvt-line);
-            text-align: left;
-            white-space: nowrap;
-        }
-        table.narc-table th {
-            color: var(--kvt-perkins-blue);
-            font-size: 0.82rem;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-        }
-        table.narc-table td.num,
-        table.narc-table th.num { text-align: right; }
-        table.narc-table tbody tr:hover { background: #f7fbff; }
-        .narc-status { min-height: 1.2em; margin: 0 0 8px; font-size: 0.88rem; color: var(--kvt-muted); }
-        .narc-heatmap {
-            width: 100%;
-            margin: 0 0 16px;
-        }
-        .narc-heatmap-grid {
-            width: 100%;
-        }
-        .narc-heatmap-svg {
-            display: block;
-            overflow: visible;
-        }
         @media (min-width: 700px) {
-            .narc-page { padding: 20px 20px 36px; }
             .narc-form--dates { grid-template-columns: 1fr 1fr; }
             .narc-chart-wrap { height: 800px; }
             .narc-rank-grid { grid-template-columns: 1fr 1fr; gap: 24px; }
@@ -232,6 +123,7 @@ if (!is_string($topJson)) {
 <div class="narc-page">
     <header class="narc-header">
         <img src="logo-website.png" alt="KVT">
+        <?= narcissus_tabs_html('pagina') ?>
     </header>
 
     <section class="narc-card narc-card--hero">
