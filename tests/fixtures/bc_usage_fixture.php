@@ -184,3 +184,55 @@ function bc_usage_fixture_transport(array $fixture, array $statusByTable = [], ?
         return ['status' => 200, 'body' => json_encode(['value' => $rows, 'meta' => ['from_cache' => 0]])];
     };
 }
+
+/**
+ * Mímir-formaat van Users, zoals live gevonden (okt 2026):
+ * - Mímir vraagt BC op met Accept-Language: nl-NL, dus BC geeft Nederlandse captions voor optievelden:
+ *   State 'Geactiveerd'/'Gedeactiveerd', License_Type 'Volwaardige gebruiker' (live gecontroleerd).
+ *   'Beperkte gebruiker' en 'Alleen apparaatgebruiker' zijn de verwachte NL-captions (live geen rijen).
+ * - Users zonder filter: Mímir haalt alle kolommen uit BC en projecteert daarna op de gevraagde select
+ *   (mimir_project_row), dus '@odata.etag' en niet-gevraagde kolommen vallen weg.
+ *
+ * @param 'nl'|'xhhhh' $variant 'xhhhh' = OData-naamcodering (Full_x0020_User) met afwijkende hoofdletters.
+ * @param list<string> $select
+ * @return list<array<string, mixed>>
+ */
+function bc_usage_fixture_mimir_users(array $users, array $select, string $variant = 'nl'): array
+{
+    $maps = [
+        'nl' => [
+            'State' => ['Enabled' => 'Geactiveerd', 'Disabled' => 'Gedeactiveerd'],
+            'License_Type' => [
+                'Full User' => 'Volwaardige gebruiker',
+                'Limited User' => 'Beperkte gebruiker',
+                'Device Only User' => 'Alleen apparaatgebruiker',
+                'Application' => 'Toepassing',
+            ],
+        ],
+        'xhhhh' => [
+            'State' => ['Enabled' => 'ENABLED', 'Disabled' => 'disabled'],
+            'License_Type' => [
+                'Full User' => 'Full_x0020_User',
+                'Limited User' => 'limited_x0020_user',
+                'Device Only User' => 'Device_x0020_Only_x0020_User',
+                'Application' => 'Application',
+            ],
+        ],
+    ][$variant];
+
+    $out = [];
+    foreach ($users as $row) {
+        foreach ($maps as $field => $map) {
+            $row[$field] = $map[$row[$field]] ?? $row[$field];
+        }
+        $projected = [];
+        foreach ($select as $column) {
+            if (array_key_exists($column, $row)) {
+                $projected[$column] = $row[$column];
+            }
+        }
+        $out[] = $projected;
+    }
+
+    return $out;
+}

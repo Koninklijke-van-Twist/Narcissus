@@ -43,6 +43,18 @@ const NARCISSUS_BC_USAGE_USERS_COMPANY = 'Koninklijke van Twist';
 const NARCISSUS_BC_USAGE_TIME_COMPANIES = ['Koninklijke van Twist', 'Hunter van Twist', 'KVT Gas'];
 const NARCISSUS_BC_USAGE_STATE_ENABLED = 'Enabled';
 const NARCISSUS_BC_USAGE_LICENSE_TYPES = ['Full User', 'Limited User', 'Device Only User'];
+// Mímir vraagt BC op met Accept-Language: nl-NL. BC geeft optievelden (State, License_Type) dan als
+// Nederlandse caption terug: 'Geactiveerd'/'Gedeactiveerd' en 'Volwaardige gebruiker' in plaats van
+// 'Enabled'/'Disabled' en 'Full User' (live gecontroleerd, okt 2026). Vergelijken gebeurt genormaliseerd:
+// _xHHHH_ gedecodeerd, '_' en '-' als spatie, hoofdletterongevoelig (zie narcissus_bc_usage_normalize_option).
+const NARCISSUS_BC_USAGE_STATE_ENABLED_ALIASES = ['enabled', 'geactiveerd', 'ingeschakeld'];
+const NARCISSUS_BC_USAGE_LICENSE_ALIASES = [
+    'Full User' => ['full user', 'volwaardige gebruiker', 'volledige gebruiker'],
+    'Limited User' => ['limited user', 'beperkte gebruiker'],
+    'Device Only User' => ['device only user', 'alleen apparaatgebruiker', 'apparaatgebruiker', 'gebruiker alleen apparaat'],
+];
+// Nightly-diagnose: hoeveel verschillende State-/License_Type-waarden maximaal in de uitvoer.
+const NARCISSUS_BC_USAGE_DIAG_MAX_VALUES = 12;
 const NARCISSUS_BC_USAGE_USERS_SELECT = [
     'User_Security_ID',
     'User_Name',
@@ -242,8 +254,101 @@ function narcissus_bc_usage_user_key(string $userName): string
 }
 
 /**
- * Alleen State Enabled en een licentietype uit NARCISSUS_BC_USAGE_LICENSE_TYPES.
- * Bewaart bewust geen SID of e-mail: naam en licentietype zijn genoeg.
+ * Decodeert OData/XML-naamcodering: _x0020_ → spatie, _x00E9_ → é. Ongeldige reeksen blijven staan.
+ */
+function narcissus_bc_usage_decode_xhhhh(string $value): string
+{
+    return (string) preg_replace_callback('/_x([0-9A-Fa-f]{4})_/', static function (array $match): string {
+        $char = mb_chr((int) hexdec($match[1]), 'UTF-8');
+
+        return is_string($char) ? $char : $match[0];
+    }, $value);
+}
+
+/**
+ * Optiewaarde vergelijkbaar maken: _xHHHH_ decoderen, '_' en '-' als spatie, witruimte samenvoegen, kleine letters.
+ * 'Full_x0020_User', 'Full_User', 'FULL USER' en 'full user' worden allemaal 'full user'.
+ */
+function narcissus_bc_usage_normalize_option($value): string
+{
+    if (!is_scalar($value)) {
+        return '';
+    }
+
+    $text = narcissus_bc_usage_decode_xhhhh(trim((string) $value));
+    $text = str_replace(['_', '-'], ' ', $text);
+    $text = (string) preg_replace('/\s+/u', ' ', $text);
+
+    return mb_strtolower(trim($text), 'UTF-8');
+}
+
+/**
+ * Veldwaarde uit een rij. Eerst exact, anders hoofdletterongevoelig en met _xHHHH_/spaties genormaliseerd,
+ * zodat 'user_name' of 'User Name' ook 'User_Name' vinden.
+ *
+ * @param array<string, mixed> $row
+ * @return mixed
+ */
+function narcissus_bc_usage_row_value(array $row, string $field)
+{
+    if (array_key_exists($field, $row)) {
+        return $row[$field];
+    }
+
+    $wanted = narcissus_bc_usage_field_key($field);
+    foreach ($row as $key => $value) {
+        if (is_string($key) && narcissus_bc_usage_field_key($key) === $wanted) {
+            return $value;
+        }
+    }
+
+    return null;
+}
+
+function narcissus_bc_usage_field_key(string $field): string
+{
+    return strtolower(str_replace([' ', '-'], '_', narcissus_bc_usage_decode_xhhhh(trim($field))));
+}
+
+function narcissus_bc_usage_row_string(array $row, string $field): string
+{
+    $value = narcissus_bc_usage_row_value($row, $field);
+
+    return is_scalar($value) ? trim((string) $value) : '';
+}
+
+function narcissus_bc_usage_state_enabled($state): bool
+{
+    return in_array(narcissus_bc_usage_normalize_option($state), NARCISSUS_BC_USAGE_STATE_ENABLED_ALIASES, true);
+}
+
+/**
+ * Licentietype naar de canonieke Engelse naam uit NARCISSUS_BC_USAGE_LICENSE_TYPES, of null.
+ * Engels en Nederlands; voor Device Only User ook elke caption met 'apparaat' of 'device only'
+ * (andere BC-licentietypes zoals Windows-groep, Externe gebruiker, Agent of Toepassing bevatten dat niet).
+ */
+function narcissus_bc_usage_license_match($license): ?string
+{
+    $normalized = narcissus_bc_usage_normalize_option($license);
+    if ($normalized === '') {
+        return null;
+    }
+
+    foreach (NARCISSUS_BC_USAGE_LICENSE_ALIASES as $type => $aliases) {
+        if (in_array($normalized, $aliases, true)) {
+            return $type;
+        }
+    }
+    if (str_contains($normalized, 'device only') || str_contains($normalized, 'apparaat')) {
+        return 'Device Only User';
+    }
+
+    return null;
+}
+
+/**
+ * Alleen State Enabled en een licentietype uit NARCISSUS_BC_USAGE_LICENSE_TYPES (Engels of Nederlands,
+ * zie narcissus_bc_usage_license_match). Bewaart bewust geen SID of e-mail: naam en licentietype zijn genoeg.
  *
  * @param list<array<string, mixed>> $rows
  * @return array<string, array{user: string, name: string, license: string}>
@@ -256,25 +361,17 @@ function narcissus_bc_usage_licensed_users(array $rows): array
             continue;
         }
 
-        $userName = trim((string) ($row['User_Name'] ?? ''));
-        $state = trim((string) ($row['State'] ?? ''));
-        $license = trim((string) ($row['License_Type'] ?? ''));
-        if ($userName === '' || strcasecmp($state, NARCISSUS_BC_USAGE_STATE_ENABLED) !== 0) {
+        $userName = narcissus_bc_usage_row_string($row, 'User_Name');
+        if ($userName === '' || !narcissus_bc_usage_state_enabled(narcissus_bc_usage_row_value($row, 'State'))) {
             continue;
         }
 
-        $licenseMatch = null;
-        foreach (NARCISSUS_BC_USAGE_LICENSE_TYPES as $type) {
-            if (strcasecmp($license, $type) === 0) {
-                $licenseMatch = $type;
-                break;
-            }
-        }
+        $licenseMatch = narcissus_bc_usage_license_match(narcissus_bc_usage_row_value($row, 'License_Type'));
         if ($licenseMatch === null) {
             continue;
         }
 
-        $fullName = trim((string) ($row['Full_Name'] ?? ''));
+        $fullName = narcissus_bc_usage_row_string($row, 'Full_Name');
         $users[narcissus_bc_usage_user_key($userName)] = [
             'user' => $userName,
             'name' => $fullName !== '' ? $fullName : $userName,
@@ -287,6 +384,133 @@ function narcissus_bc_usage_licensed_users(array $rows): array
     });
 
     return $users;
+}
+
+/**
+ * Anonieme tellingen over de Users-rijen voor de nightly-uitvoer: geen namen, e-mails of SID's.
+ * Alleen de (niet-persoonlijke) waarden van State en License_Type worden geteld. Kolomnamen van de
+ * eerste rij alleen als er rijen zijn maar niemand gelicentieerd is.
+ *
+ * @param list<array<string, mixed>> $rows
+ * @return array{rows: int, named: int, enabled: int, licensed: int, state_values: array<string, int>, license_values: array<string, int>, columns: list<string>}
+ */
+function narcissus_bc_usage_users_diagnostics(array $rows): array
+{
+    $named = 0;
+    $enabled = 0;
+    $states = [];
+    $licenses = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        if (narcissus_bc_usage_row_string($row, 'User_Name') !== '') {
+            $named++;
+        }
+        $state = narcissus_bc_usage_row_value($row, 'State');
+        if (narcissus_bc_usage_state_enabled($state)) {
+            $enabled++;
+        }
+        $stateLabel = narcissus_bc_usage_diag_value($state);
+        $states[$stateLabel] = ($states[$stateLabel] ?? 0) + 1;
+        $licenseLabel = narcissus_bc_usage_diag_value(narcissus_bc_usage_row_value($row, 'License_Type'));
+        $licenses[$licenseLabel] = ($licenses[$licenseLabel] ?? 0) + 1;
+    }
+
+    arsort($states);
+    arsort($licenses);
+    $licensed = count(narcissus_bc_usage_licensed_users($rows));
+    $columns = [];
+    if ($licensed === 0 && $rows !== [] && is_array($rows[0] ?? null)) {
+        foreach (array_keys($rows[0]) as $key) {
+            $columns[] = narcissus_bc_usage_diag_value((string) $key);
+        }
+    }
+
+    return [
+        'rows' => count($rows),
+        'named' => $named,
+        'enabled' => $enabled,
+        'licensed' => $licensed,
+        'state_values' => $states,
+        'license_values' => $licenses,
+        'columns' => $columns,
+    ];
+}
+
+/**
+ * Waarde veilig voor één diagnoseregel: geen ',' ':' '=' of regeleinden, maximaal 40 tekens.
+ */
+function narcissus_bc_usage_diag_value($value): string
+{
+    if ($value === null) {
+        return '(ontbreekt)';
+    }
+    if (!is_scalar($value)) {
+        return '(' . gettype($value) . ')';
+    }
+    if (is_bool($value)) {
+        return $value ? 'true' : 'false';
+    }
+
+    $text = trim((string) preg_replace('/[\s,:=]+/u', ' ', (string) $value));
+    if ($text === '') {
+        return '(leeg)';
+    }
+
+    return mb_strlen($text, 'UTF-8') > 40 ? mb_substr($text, 0, 40, 'UTF-8') . '…' : $text;
+}
+
+/**
+ * @param array<string, int> $counts
+ */
+function narcissus_bc_usage_diag_counts(array $counts): string
+{
+    if ($counts === []) {
+        return '-';
+    }
+
+    $parts = [];
+    $rest = 0;
+    foreach ($counts as $value => $count) {
+        if (count($parts) >= NARCISSUS_BC_USAGE_DIAG_MAX_VALUES) {
+            $rest += $count;
+            continue;
+        }
+        $parts[] = $value . ':' . $count;
+    }
+    if ($rest > 0) {
+        $parts[] = '(overig):' . $rest;
+    }
+
+    return implode(',', $parts);
+}
+
+/**
+ * Regels voor de nightly-uitvoer, bijv.
+ *   users_rows=199 named=199 enabled=153 licensed=153 state_values=Geactiveerd:153,Gedeactiveerd:46 license_values=Volwaardige gebruiker:199
+ *   users_columns=User_Name,State,…   (alleen als licensed=0 bij >0 rijen)
+ *
+ * @param array<string, mixed> $diagnostics
+ * @return list<string>
+ */
+function narcissus_bc_usage_diagnostics_lines(array $diagnostics): array
+{
+    $lines = [
+        'users_rows=' . (int) ($diagnostics['rows'] ?? 0)
+        . ' named=' . (int) ($diagnostics['named'] ?? 0)
+        . ' enabled=' . (int) ($diagnostics['enabled'] ?? 0)
+        . ' licensed=' . (int) ($diagnostics['licensed'] ?? 0)
+        . ' state_values=' . narcissus_bc_usage_diag_counts(is_array($diagnostics['state_values'] ?? null) ? $diagnostics['state_values'] : [])
+        . ' license_values=' . narcissus_bc_usage_diag_counts(is_array($diagnostics['license_values'] ?? null) ? $diagnostics['license_values'] : []),
+    ];
+    $columns = is_array($diagnostics['columns'] ?? null) ? $diagnostics['columns'] : [];
+    if ($columns !== []) {
+        $lines[] = 'users_columns=' . implode(',', array_map('strval', $columns));
+    }
+
+    return $lines;
 }
 
 /**
@@ -307,17 +531,18 @@ function narcissus_bc_usage_aggregate(array $licensedUsers, array $timeRowSets, 
                 continue;
             }
 
-            $key = narcissus_bc_usage_user_key((string) ($row['User_ID'] ?? ''));
+            $key = narcissus_bc_usage_user_key(narcissus_bc_usage_row_string($row, 'User_ID'));
             if ($key === '' || !isset($licensedUsers[$key])) {
                 continue;
             }
 
-            $date = narcissus_parse_date(substr(trim((string) ($row['Date'] ?? '')), 0, 10));
+            $date = narcissus_parse_date(substr(narcissus_bc_usage_row_string($row, 'Date'), 0, 10));
             if ($date === '' || $date < $from || $date > $to) {
                 continue;
             }
 
-            $value = (int) round((float) ($row['Minutes'] ?? 0));
+            $minutesValue = narcissus_bc_usage_row_value($row, 'Minutes');
+            $value = (int) round(is_numeric($minutesValue) ? (float) $minutesValue : 0.0);
             if ($value <= 0) {
                 continue;
             }
@@ -383,6 +608,7 @@ function narcissus_bc_usage_source_status(string $table, string $company, ?Throw
  *
  * @return array{
  *   users_ok: bool,
+ *   users_diagnostics: array<string, mixed>|null,
  *   time_ok_count: int,
  *   sources: list<array<string, mixed>>,
  *   users: list<array{user: string, name: string, license: string, days: array<string, int>}>,
@@ -433,9 +659,27 @@ function narcissus_bc_usage_fetch(?DateTimeImmutable $today = null, int $maxAgeS
     }
 
     $licensed = $usersOk ? narcissus_bc_usage_licensed_users($userRows) : [];
+    $diagnostics = $usersOk ? narcissus_bc_usage_users_diagnostics($userRows) : null;
+
+    // Niet stil falen: Users gaf antwoord, maar niemand voldoet (bv. onverwachte optiewaarden of kolomnamen).
+    // Dan telt Users als mislukt, blijven de vorige gegevens staan en staat er een melding op de tab.
+    if ($usersOk && $licensed === []) {
+        $usersOk = false;
+        $label = NARCISSUS_BC_USAGE_USERS_TABLE . ' (' . NARCISSUS_BC_USAGE_USERS_COMPANY . ')';
+        foreach ($sources as $index => $source) {
+            if (($source['table'] ?? '') === NARCISSUS_BC_USAGE_USERS_TABLE) {
+                $sources[$index]['status'] = 'geen_licenties';
+                $sources[$index]['message'] = $userRows === []
+                    ? $label . ' gaf geen rijen terug. Vorige gegevens blijven staan.'
+                    : $label . ' gaf ' . count($userRows) . ' rijen, maar geen enkele gebruiker met status Enabled en licentietype '
+                        . implode(', ', NARCISSUS_BC_USAGE_LICENSE_TYPES) . '. Vorige gegevens blijven staan; zie de diagnose in de nightly-uitvoer.';
+            }
+        }
+    }
 
     return [
         'users_ok' => $usersOk,
+        'users_diagnostics' => $diagnostics,
         'time_ok_count' => count($timeRowSets),
         'sources' => $sources,
         'users' => $usersOk ? narcissus_bc_usage_aggregate($licensed, $timeRowSets, $window['from'], $window['today']) : [],
@@ -532,7 +776,7 @@ function narcissus_bc_usage_read(?string $path = null): ?array
  * - Users mislukt of alle UserTimeRegisters mislukt: vorige gegevens blijven staan, alleen de bronstatus wordt bijgewerkt.
  * - Eén of twee bedrijven mislukt: nieuwe gegevens van de rest, met de melding per bron.
  *
- * @return array{written: bool, kept_previous: bool, users: int, sources: list<array<string, mixed>>}
+ * @return array{written: bool, kept_previous: bool, users: int, sources: list<array<string, mixed>>, users_diagnostics: array<string, mixed>|null}
  */
 function narcissus_bc_usage_refresh(
     ?DateTimeImmutable $today = null,
@@ -575,6 +819,7 @@ function narcissus_bc_usage_refresh(
         'kept_previous' => !$complete,
         'users' => count($data['users'] ?? []),
         'sources' => $fetched['sources'],
+        'users_diagnostics' => $fetched['users_diagnostics'],
     ];
 }
 

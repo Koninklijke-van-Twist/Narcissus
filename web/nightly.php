@@ -44,6 +44,11 @@ try {
     echo "\nNarcissus nightly BC Gebruik " . ($bcUsage['kept_previous'] ? 'ONVOLLEDIG (vorige gegevens blijven staan)' : 'OK') . "\n";
     echo 'written=' . ($bcUsage['written'] ? 'yes' : 'no') . "\n";
     echo 'users=' . (int) $bcUsage['users'] . "\n";
+    if (is_array($bcUsage['users_diagnostics'] ?? null)) {
+        foreach (narcissus_bc_usage_diagnostics_lines($bcUsage['users_diagnostics']) as $line) {
+            echo $line . "\n";
+        }
+    }
     foreach ($bcUsage['sources'] as $source) {
         echo 'source=' . (string) ($source['source'] ?? '') . ' status=' . (string) ($source['status'] ?? '')
             . ' rows=' . (int) ($source['rows'] ?? 0) . "\n";
