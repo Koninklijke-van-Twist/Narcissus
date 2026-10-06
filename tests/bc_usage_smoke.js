@@ -21,6 +21,17 @@ assert.strictEqual(bcu.cellFill(600, 600, 'sqrt', false), 'rgba(0, 153, 204, 1.0
 assert.strictEqual(bcu.cellFill(600, 600, 'sqrt', true), 'rgb(246, 247, 249)');
 assert.strictEqual(bcu.cellFill(10, 0, 'sqrt', false), 'rgb(235, 237, 240)');
 
+// Boven het plafond: geel (zelfde ramp als Pagina-activiteit), hover toont de echte waarde.
+assert.strictEqual(bcu.overCapRgb(600, 600, 5), null, 'op het plafond geen geel');
+assert.deepStrictEqual(bcu.overCapRgb(601, 600, 5), [255, 255, 0]);
+assert.deepStrictEqual(bcu.overCapRgb(3000, 600, 5), [255, 136, 0]);
+assert.deepStrictEqual(bcu.overCapRgb(1800, 600, 5), [255, 196, 0]);
+assert.strictEqual(bcu.cellFill(601, 600, 'linear', false, 5), 'rgb(255,255,0)');
+assert.strictEqual(bcu.cellFill(3148, 1393, 'linear', false, 5), 'rgb(255,218,0)');
+assert.strictEqual(bcu.cellFill(3148, 1393, 'linear', true, 5), 'rgb(246, 247, 249)', 'toekomst blijft grijs');
+assert.strictEqual(bcu.cellFill(300, 600, 'linear', false, 5), 'rgba(0, 153, 204, 0.575)');
+assert.strictEqual(bcu.cellTitle({ date: '2026-10-04', count: 3148 }), '4 oktober 2026 — 52:28');
+
 const rows = [
     { user: 'KVT\\A', name: 'Anna', active_30: 2, last_day: '2026-10-01', low: true },
     { user: 'KVT\\B', name: 'Bram', active_30: 20, last_day: null, low: false },

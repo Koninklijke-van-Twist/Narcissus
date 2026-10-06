@@ -205,6 +205,7 @@ $problemSources = array_values(array_filter($summary['sources'], static function
         <p class="narc-subtitle">Welke BC-gebruikers met een licentie gebruiken Business Central weinig of juist veel? Alleen gebruikers met status Enabled en licentietype Full User, Limited User of Device Only User.</p>
         <p class="bcu-note">
             <strong>Let op:</strong> minuten komen uit de BC-tabel User Time Register (KVT, HVT en KVT Gas opgeteld). Ze tellen <strong>inclusief idle-tijd</strong>, van openen tot sluiten van het bedrijf, en alleen waar <strong>Register Time</strong> aan staat in Gebruikersinstellingen. Geen registraties betekent dus niet altijd geen gebruik.
+            <br><strong>Heatmap:</strong> lineaire kleurschaal. Het plafond is het <?= (int) NARCISSUS_BC_USAGE_CEILING_PERCENTILE ?>e percentiel van alle dagwaarden; dagen boven <?= narcissus_h(narcissus_format_minutes_hhmm(NARCISSUS_BC_USAGE_OUTLIER_MINUTES)) ?> (meerdere sessies of bedrijven over elkaar heen) tellen alleen voor dat plafond niet mee. In totalen en gemiddelden tellen alle minuten gewoon mee. Dagen boven het plafond zijn geel.
             <br>Logintijden zijn persoonsgegevens: deze tab is alleen voor beheerders en alleen bedoeld voor licentiebeheer.
         </p>
         <?php if ($problemSources !== []): ?>
@@ -237,7 +238,7 @@ $problemSources = array_values(array_filter($summary['sources'], static function
                 </div>
                 <div class="bcu-stat">
                     <span class="bcu-stat-value"><?= narcissus_h($summary['ceiling_label']) ?></span>
-                    <span class="bcu-stat-label">hoogste dagwaarde (plafond heatmap)</span>
+                    <span class="bcu-stat-label">kleurplafond heatmap (P<?= (int) NARCISSUS_BC_USAGE_CEILING_PERCENTILE ?>, zonder dagen boven <?= narcissus_h(narcissus_format_minutes_hhmm(NARCISSUS_BC_USAGE_OUTLIER_MINUTES)) ?>)</span>
                 </div>
             </div>
         <?php endif; ?>
@@ -292,6 +293,7 @@ $problemSources = array_values(array_filter($summary['sources'], static function
     const summary = <?= $summaryJson ?>;
     const ceiling = Number(summary.ceiling_minutes || 0);
     const scale = <?= json_encode(NARCISSUS_BC_USAGE_HEATMAP_SCALE) ?>;
+    const overLimitMultiplier = <?= (int) narcissus_heatmap_over_limit_multiplier() ?>;
     const cellPx = 18;
     const gapPx = 3;
     const radius = <?= (int) NARCISSUS_HEATMAP_CELL_RADIUS ?>;
@@ -364,7 +366,7 @@ $problemSources = array_values(array_filter($summary['sources'], static function
             const isToday = String(day.date || '') === summary.window_today;
             shapes += '<rect x="' + (gutter + (cell.col * stride)) + '" y="' + (monthBand + (cell.row * stride)) + '"'
                 + ' width="' + cellPx + '" height="' + cellPx + '" rx="' + radius + '"'
-                + ' fill="' + fmt.cellFill(day.count, ceiling, scale, inactive) + '"'
+                + ' fill="' + fmt.cellFill(day.count, ceiling, scale, inactive, overLimitMultiplier) + '"'
                 + ' stroke="' + (isToday ? 'rgb(230, 152, 152)' : 'rgba(0, 0, 0, 0.04)') + '">'
                 + '<title>' + escapeHtml(fmt.cellTitle(day)) + '</title></rect>';
         });
@@ -376,11 +378,12 @@ $problemSources = array_values(array_filter($summary['sources'], static function
         const steps = [0, 0.1, 0.3, 0.6, 1];
         let swatches = '';
         steps.forEach(function (step) {
-            swatches += '<span class="bcu-legend-swatch" style="background:' + fmt.cellFill(step * ceiling, ceiling, scale, false) + '"></span>';
+            swatches += '<span class="bcu-legend-swatch" style="background:' + fmt.cellFill(step * ceiling, ceiling, scale, false, overLimitMultiplier) + '"></span>';
         });
         return '<div class="bcu-legend"><span>00:00</span>' + swatches
-            + '<span>' + escapeHtml(fmt.formatHhmm(ceiling)) + ' (hoogste dagwaarde van alle gebruikers'
-            + (scale === 'linear' ? '' : ', wortelschaal') + ')</span>'
+            + '<span>' + escapeHtml(fmt.formatHhmm(ceiling)) + ' (plafond)</span>'
+            + '<span class="bcu-legend-swatch" style="margin-left:8px;background:' + fmt.cellFill(ceiling + 1, ceiling, scale, false, overLimitMultiplier) + '"></span>'
+            + '<span>geel = boven het plafond</span>'
             + '<span style="margin-left:auto">' + escapeHtml(row.name) + ': '
             + escapeHtml(String(row.active_window)) + ' actieve dagen, totaal '
             + escapeHtml(Number(row.total_hours || 0).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }))

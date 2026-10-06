@@ -28,7 +28,15 @@ const NARCISSUS_BC_USAGE_WINDOW_WEEKS = 26;
 const NARCISSUS_BC_USAGE_RECENT_DAYS = 30;
 const NARCISSUS_BC_USAGE_LOW_ACTIVE_DAYS = 4;
 const NARCISSUS_BC_USAGE_LOW_LAST_DAY_DAYS = 30;
-const NARCISSUS_BC_USAGE_HEATMAP_SCALE = 'sqrt';
+const NARCISSUS_BC_USAGE_HEATMAP_SCALE = 'linear';
+// Dagwaarden boven deze grens (meer dan 24:00, bv. een sessie die dagen open bleef of bedrijven die over
+// elkaar heen tellen) worden alleen genegeerd bij het bepalen van het kleurplafond. In totalen, gemiddelden
+// en de heatmap tellen ze gewoon mee; zo'n cel krijgt de maximale kleur.
+const NARCISSUS_BC_USAGE_OUTLIER_MINUTES = 1440;
+// Kleurplafond = dit percentiel (nearest rank) van alle dagwaarden t/m NARCISSUS_BC_USAGE_OUTLIER_MINUTES.
+// Live (okt 2026): max 24:00, P99 23:13, P95 20:08. De staart tegen 24:00 is dicht, dus het maximum
+// is vrijwel altijd de drempel zelf; P99 volgt de data en is ongevoelig voor één losse waarde.
+const NARCISSUS_BC_USAGE_CEILING_PERCENTILE = 99;
 const NARCISSUS_BC_USAGE_USERS_TABLE = 'Users';
 const NARCISSUS_BC_USAGE_TIME_TABLE = 'UserTimeRegisters';
 const NARCISSUS_BC_USAGE_USERS_COMPANY = 'Koninklijke van Twist';
@@ -167,6 +175,28 @@ function narcissus_format_minutes_hhmm(int $minutes): string
     $minutes = max(0, $minutes);
 
     return sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60);
+}
+
+function narcissus_bc_usage_is_outlier(int $minutes): bool
+{
+    return $minutes > NARCISSUS_BC_USAGE_OUTLIER_MINUTES;
+}
+
+/**
+ * Percentiel volgens nearest rank (P100 = maximum). Lege lijst = 0.
+ *
+ * @param list<int> $values
+ */
+function narcissus_bc_usage_percentile(array $values, float $percentile): int
+{
+    if ($values === []) {
+        return 0;
+    }
+
+    sort($values, SORT_NUMERIC);
+    $rank = (int) ceil((max(0.0, min(100.0, $percentile)) / 100) * count($values));
+
+    return (int) $values[max(0, min(count($values) - 1, $rank - 1))];
 }
 
 /**
@@ -565,7 +595,7 @@ function narcissus_bc_usage_summary(?array $data, ?DateTimeImmutable $today = nu
     $todayTs = narcissus_bc_usage_today($today)->getTimestamp();
 
     $rows = [];
-    $ceiling = 0;
+    $ceilingValues = [];
     $lowCount = 0;
     foreach (($data['users'] ?? []) as $user) {
         if (!is_array($user)) {
@@ -592,7 +622,10 @@ function narcissus_bc_usage_summary(?array $data, ?DateTimeImmutable $today = nu
             if ($lastDay === null || $date > $lastDay) {
                 $lastDay = $date;
             }
-            $ceiling = max($ceiling, $value);
+            // Alleen voor het kleurplafond: uitschieters boven NARCISSUS_BC_USAGE_OUTLIER_MINUTES tellen niet mee.
+            if (!narcissus_bc_usage_is_outlier($value)) {
+                $ceilingValues[] = $value;
+            }
         }
 
         $daysSinceLast = null;
@@ -633,6 +666,7 @@ function narcissus_bc_usage_summary(?array $data, ?DateTimeImmutable $today = nu
         ];
     }
 
+    $ceiling = narcissus_bc_usage_percentile($ceilingValues, NARCISSUS_BC_USAGE_CEILING_PERCENTILE);
     $generatedAt = (int) ($data['generated_at'] ?? 0);
     $attemptedAt = (int) ($data['attempted_at'] ?? 0);
     $sources = [];
@@ -657,6 +691,9 @@ function narcissus_bc_usage_summary(?array $data, ?DateTimeImmutable $today = nu
         'recent_label' => narcissus_format_dutch_date($window['recent_from']) . ' t/m ' . narcissus_format_dutch_date($window['today']),
         'ceiling_minutes' => $ceiling,
         'ceiling_label' => narcissus_format_minutes_hhmm($ceiling),
+        'ceiling_percentile' => NARCISSUS_BC_USAGE_CEILING_PERCENTILE,
+        'outlier_minutes' => NARCISSUS_BC_USAGE_OUTLIER_MINUTES,
+        'outlier_label' => narcissus_format_minutes_hhmm(NARCISSUS_BC_USAGE_OUTLIER_MINUTES),
         'user_count' => count($rows),
         'low_count' => $lowCount,
         'thresholds' => [

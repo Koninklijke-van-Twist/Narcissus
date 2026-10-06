@@ -65,6 +65,16 @@ bcu_same('07:35', narcissus_format_minutes_hhmm(455), 'HH:MM');
 bcu_same('52:28', narcissus_format_minutes_hhmm(3148), 'HH:MM boven 24 uur');
 bcu_same('00:00', narcissus_format_minutes_hhmm(-5), 'negatief wordt 00:00');
 
+/* ---------- Kleurplafond: P99 zonder uitschieters ---------- */
+bcu_same(1440, NARCISSUS_BC_USAGE_OUTLIER_MINUTES, 'uitschietergrens 24:00');
+bcu_same(99, NARCISSUS_BC_USAGE_CEILING_PERCENTILE, 'plafond = P99');
+bcu_same('linear', NARCISSUS_BC_USAGE_HEATMAP_SCALE, 'lineaire schaal');
+bcu_assert(!narcissus_bc_usage_is_outlier(1440) && narcissus_bc_usage_is_outlier(1441), 'precies 24:00 is geen uitschieter');
+bcu_same(0, narcissus_bc_usage_percentile([], 99), 'percentiel van lege lijst');
+bcu_same(99, narcissus_bc_usage_percentile(range(1, 100), 99), 'P99 nearest rank van 1..100');
+bcu_same(100, narcissus_bc_usage_percentile(range(100, 1, -1), 100), 'P100 = maximum, ongesorteerde invoer');
+bcu_same(7, narcissus_bc_usage_percentile([7], 99), 'P99 van één waarde');
+
 /* ---------- Venster ---------- */
 $window = narcissus_bc_usage_window($today);
 bcu_same('2026-04-13', $window['from'], 'venster begint op maandag 25 weken voor deze week');
@@ -101,6 +111,7 @@ $aggregated = narcissus_bc_usage_aggregate($licensed, [
     [
         ['User_ID' => 'kvt\\alice ', 'Date' => '2026-10-06', 'Minutes' => 300],
         ['User_ID' => 'KVT\\ALICE', 'Date' => '2026-10-05', 'Minutes' => 120],
+        ['User_ID' => 'KVT\\ALICE', 'Date' => '2026-10-04', 'Minutes' => 3148], // uitschieter (> 24:00)
         ['User_ID' => 'KVT\\ALICE', 'Date' => '2026-03-01', 'Minutes' => 999], // vóór het venster
         ['User_ID' => 'KVT\\DAVE', 'Date' => '2026-10-06', 'Minutes' => 500], // disabled
         ['User_ID' => 'KVT\\BOB', 'Date' => '2026-08-01', 'Minutes' => 0],
@@ -111,21 +122,21 @@ $aggregated = narcissus_bc_usage_aggregate($licensed, [
     ],
 ], $window['from'], $window['today']);
 $alice = bcu_find($aggregated, 'KVT\\ALICE');
-bcu_same(['2026-10-05' => 120, '2026-10-06' => 455], $alice['days'], 'minuten per dag over bedrijven opgeteld, join case-insensitive + trim');
+bcu_same(['2026-10-04' => 3148, '2026-10-05' => 120, '2026-10-06' => 455], $alice['days'], 'minuten per dag over bedrijven opgeteld, join case-insensitive + trim');
 bcu_same([], bcu_find($aggregated, 'KVT\\CAROL')['days'], 'gebruiker zonder registraties blijft in de lijst');
 bcu_same(null, bcu_find($aggregated, 'KVT\\DAVE'), 'disabled gebruiker valt weg');
 
 $small = ['version' => 1, 'generated_at' => $now, 'sources' => [], 'users' => $aggregated];
 $summary = narcissus_bc_usage_summary($small, $today, $now);
 $aliceRow = bcu_find($summary['users'], 'KVT\\ALICE');
-bcu_same(2, $aliceRow['active_30'], 'Alice actief 30 d');
-bcu_same(2, $aliceRow['active_window'], 'Alice actief venster');
-bcu_same(575, $aliceRow['total_minutes'], 'Alice totaal');
-bcu_same(288, $aliceRow['avg_minutes'], 'Alice gemiddelde (afgerond)');
-bcu_same('04:48', $aliceRow['avg_label'], 'Alice gemiddelde HH:MM');
+bcu_same(3, $aliceRow['active_30'], 'Alice actief 30 d');
+bcu_same(3, $aliceRow['active_window'], 'Alice actief venster (uitschieterdag telt mee)');
+bcu_same(3723, $aliceRow['total_minutes'], 'Alice totaal: uitschieter telt gewoon mee');
+bcu_same(1241, $aliceRow['avg_minutes'], 'Alice gemiddelde incl. uitschieter (afgerond)');
+bcu_same('20:41', $aliceRow['avg_label'], 'Alice gemiddelde HH:MM');
 bcu_same('2026-10-06', $aliceRow['last_day'], 'Alice laatste dag');
 bcu_same('6 oktober 2026', $aliceRow['last_day_label'], 'Alice laatste dag leesbaar');
-bcu_assert($aliceRow['low'], 'Alice: 2 actieve dagen < 4 = weinig gebruik');
+bcu_assert($aliceRow['low'], 'Alice: 3 actieve dagen < 4 = weinig gebruik');
 $bobRow = bcu_find($summary['users'], 'KVT\\BOB');
 bcu_same(0, $bobRow['active_30'], 'Bob niet actief in 30 d');
 bcu_same(64, $bobRow['days_since_last'], 'Bob dagen sinds laatste registratie');
@@ -133,7 +144,8 @@ bcu_same(2, count($bobRow['low_reasons']), 'Bob: twee redenen');
 $carolRow = bcu_find($summary['users'], 'KVT\\CAROL');
 bcu_same(null, $carolRow['last_day'], 'Carol geen laatste dag');
 bcu_same('Niet in het venster', $carolRow['last_day_label'], 'Carol label');
-bcu_same(455, $summary['ceiling_minutes'], 'plafond = hoogste dagwaarde');
+bcu_same(455, $summary['ceiling_minutes'], 'plafond = P99 zonder de uitschieter van 3148');
+bcu_same('07:35', $summary['ceiling_label'], 'plafond HH:MM');
 bcu_same(3, $summary['low_count'], 'alle drie weinig gebruik');
 bcu_same('13 april 2026 t/m 6 oktober 2026', $summary['window_label'], 'venster leesbaar');
 bcu_same('6 oktober 2026 om 03:12', $summary['generated_at_label'], 'bijgewerkt leesbaar');
@@ -145,6 +157,8 @@ $heatmap = narcissus_bc_usage_user_heatmap($small, ' kvt\\alice', $today);
 bcu_same(182, count($heatmap['days']), 'heatmap: 26 weken × 7 dagen');
 bcu_same('2026-04-13', $heatmap['days'][0]['date'], 'heatmap begint op maandag');
 bcu_same(455, $heatmap['days'][176]['count'], 'heatmap vandaag = 455 minuten');
+bcu_same(3148, $heatmap['days'][174]['count'], 'heatmap toont de echte uitschieterwaarde');
+bcu_assert(!isset($heatmap['days'][174]['outlier']), 'geen apart uitschieterlabel');
 bcu_assert(!$heatmap['days'][176]['future'] && $heatmap['days'][177]['future'], 'dagen na vandaag zijn toekomst');
 bcu_same(null, narcissus_bc_usage_user_heatmap($small, 'KVT\\ONBEKEND', $today), 'onbekende gebruiker');
 
@@ -200,12 +214,26 @@ foreach ($byProfile['heavy'] as $row) {
 }
 $expectedLow = count($byProfile['none']) + count($byProfile['stopped']) + count($byProfile['sporadic']);
 bcu_assert($summary['low_count'] >= $expectedLow && $summary['low_count'] <= $expectedLow + 3, 'aantal weinig gebruik klopt met profielen (' . $summary['low_count'] . ')');
-bcu_assert($summary['ceiling_minutes'] > 1440 && $summary['ceiling_minutes'] <= 3150 + 120 + 60, 'plafond = idle-uitschieter boven 24 uur');
+$allValues = [];
+foreach ($data['users'] as $user) {
+    foreach ($user['days'] as $date => $value) {
+        if ($date >= $window['from']) {
+            $allValues[] = (int) $value;
+        }
+    }
+}
+$nonOutliers = array_values(array_filter($allValues, static function (int $v): bool {
+    return $v <= NARCISSUS_BC_USAGE_OUTLIER_MINUTES;
+}));
+bcu_assert(max($allValues) > 1440, 'fixture bevat uitschieters boven 24:00');
+bcu_same(narcissus_bc_usage_percentile($nonOutliers, 99), $summary['ceiling_minutes'], 'realistisch plafond = P99 zonder uitschieters');
+bcu_assert($summary['ceiling_minutes'] <= 1440 && $summary['ceiling_minutes'] >= 480, 'realistisch plafond tussen 08:00 en 24:00 (' . $summary['ceiling_label'] . ')');
+bcu_same(array_sum($allValues), array_sum(array_column($summary['users'], 'total_minutes')), 'totalen bevatten alle minuten, ook uitschieters');
 $multi = bcu_find($summary['users'], 'KVT\\USER006'); // KVT + HVT
 bcu_assert($multi !== null && $multi['total_minutes'] > 0, 'gebruiker met KVT en HVT');
 $heat = narcissus_bc_usage_user_heatmap($data, 'KVT\\USER001', $today);
 bcu_same(182, count($heat['days']), 'realistische heatmap 182 dagen');
-bcu_assert(max(array_column($heat['days'], 'count')) <= $summary['ceiling_minutes'], 'heatmapwaarden onder plafond');
+bcu_assert(max(array_column($heat['days'], 'count')) > 0, 'heatmap met minuten');
 
 /* ---------- Bron niet gepubliceerd / fout ---------- */
 $result = narcissus_bc_usage_refresh($today, NARCISSUS_BC_USAGE_MAX_AGE_NIGHTLY, bc_usage_fixture_transport($fixture, ['UserTimeRegisters|KVT Gas' => 4040]), $path, $now + 60);

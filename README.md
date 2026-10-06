@@ -19,9 +19,9 @@ Bronnen, alleen lezen via Mímir (`POST /mimir/api/query.php`, `top: 0`):
 - Join: `UserTimeRegisters.User_ID` = `Users.User_Name` (hoofdletterongevoelig, getrimd). Minuten per gebruiker per dag worden over de drie bedrijven opgeteld.
 - Alleen `State` = Enabled en `License_Type` in Full User, Limited User, Device Only User.
 - Venster: 26 hele weken t/m de huidige week (`NARCISSUS_BC_USAGE_WINDOW_WEEKS`). Filter naar Mímir: `Date ge <vensterbegin>` als filterboom (Mímir maakt er `Date ge 2026-04-13` van, Edm.Date zonder quotes).
-- Minuten zijn **inclusief idle-tijd** en tellen alleen waar **Register Time** aan staat. Een dag kan boven 24 uur uitkomen (sessie over meerdere dagen open, of meerdere bedrijven tegelijk).
+- Minuten zijn **inclusief idle-tijd** en tellen alleen waar **Register Time** aan staat. Een dag kan boven 24 uur uitkomen (sessie over meerdere dagen open, of meerdere bedrijven tegelijk); live is dat ~6% van de actieve dagen.
 - Weinig gebruik: minder dan 4 actieve dagen in de laatste 30 dagen, of laatste registratie meer dan 30 dagen geleden. Drempels staan als constanten in `web/bc_usage.php`.
-- Heatmap per gebruiker (weekdag × week, minuten per dag). Kleurplafond = hoogste dagwaarde van alle gebruikers in het venster, met wortelschaal (`NARCISSUS_BC_USAGE_HEATMAP_SCALE`, ook `linear` kan).
+- Heatmap per gebruiker (weekdag × week, minuten per dag), lineaire kleurschaal. Kleurplafond = P99 (`NARCISSUS_BC_USAGE_CEILING_PERCENTILE`) van alle dagwaarden in het venster, zonder dagen boven 24:00 (`NARCISSUS_BC_USAGE_OUTLIER_MINUTES`): die zijn onmogelijk voor één persoon (sessies of bedrijven over elkaar heen). Live (okt 2026) is het plafond 23:13; het maximum t/m 24:00 is vrijwel altijd 24:00 zelf, P99 volgt de data. Uitschieters tellen alleen voor het plafond niet mee: in totalen, gemiddelden en de heatmap tellen alle minuten. Dagen boven het plafond zijn geel tot oranje, dezelfde kleur als bij Pagina-activiteit. Hover toont de echte waarde (HH:MM).
 
 Ophalen gebeurt alleen in `web/nightly.php` (Mímir `max_age` 4 uur). De UI leest alleen het bestand `web/data/bc_gebruik.php`: aggregaten (gebruikersnaam, volledige naam, licentietype, minuten per dag), zonder SID of e-mail. Het bestand begint met een PHP-guard (direct opvragen geeft 403) en de nightly zet een `.htaccess` met `Require all denied` in `web/data/`.
 

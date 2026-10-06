@@ -12,6 +12,11 @@
     var EMPTY_FILL = 'rgb(235, 237, 240)';
     var INACTIVE_FILL = 'rgb(246, 247, 249)';
     var MIN_ALPHA = 0.15;
+    // Zelfde boven-plafondkleur als de heatmap van Pagina-activiteit (index.php):
+    // geel op het plafond, naar oranje bij plafond × overLimitMultiplier.
+    var OVER_CAP_FROM = [255, 255, 0];
+    var OVER_CAP_TO = [255, 136, 0];
+    var DEFAULT_OVER_LIMIT_MULTIPLIER = 5;
 
     /** 455 -> "07:35"; uren boven 24 lopen door (bv. "52:28"). */
     function formatHhmm(minutes) {
@@ -46,9 +51,34 @@
         return scale === 'linear' ? ratio : Math.sqrt(ratio);
     }
 
-    function cellFill(minutes, ceiling, scale, inactive) {
+    /** Geel→oranje voor dagen boven het plafond (null als de dag er niet boven zit). */
+    function overCapRgb(minutes, ceiling, multiplier) {
+        var value = Number(minutes) || 0;
+        var limit = Number(ceiling) || 0;
+        if (limit <= 0 || value <= limit) {
+            return null;
+        }
+        var factor = Math.max(1, Number(multiplier) || DEFAULT_OVER_LIMIT_MULTIPLIER);
+        var cap = limit * factor;
+        if (value >= cap) {
+            return OVER_CAP_TO.slice();
+        }
+        var range = cap - limit;
+        var ratio = range > 0 ? ((value - limit) / range) : 1;
+        return [
+            Math.round(OVER_CAP_FROM[0] + ((OVER_CAP_TO[0] - OVER_CAP_FROM[0]) * ratio)),
+            Math.round(OVER_CAP_FROM[1] + ((OVER_CAP_TO[1] - OVER_CAP_FROM[1]) * ratio)),
+            Math.round(OVER_CAP_FROM[2] + ((OVER_CAP_TO[2] - OVER_CAP_FROM[2]) * ratio))
+        ];
+    }
+
+    function cellFill(minutes, ceiling, scale, inactive, multiplier) {
         if (inactive) {
             return INACTIVE_FILL;
+        }
+        var overCap = overCapRgb(minutes, ceiling, multiplier);
+        if (overCap) {
+            return 'rgb(' + overCap.join(',') + ')';
         }
         var level = intensity(minutes, ceiling, scale);
         if (level <= 0) {
@@ -118,6 +148,7 @@
         formatHhmm: formatHhmm,
         formatDutchDate: formatDutchDate,
         intensity: intensity,
+        overCapRgb: overCapRgb,
         cellFill: cellFill,
         cellTitle: cellTitle,
         sortRows: sortRows,
