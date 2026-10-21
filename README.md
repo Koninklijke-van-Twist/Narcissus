@@ -2,6 +2,8 @@
 
 Interne analytics-pagina op sleutels.kvt.nl. `web/` is de page root en gaat via FTP naar de server (zie `.github/workflows/deploy-ftp.yml`).
 
+`web/analytics/analytics.sqlite` (en `*.sqlite-*`) blijft op de server staan bij een deploy: de FTP-mirror slaat die bestanden al over. Dezelfde mirror slaat `.htaccess` over, dus een gecommit bestand komt niet mee en een bestaand bestand wordt niet gewist. `analytics.php` schrijft `web/analytics/.htaccess` als die ontbreekt (of vult hem aan als het woord `sqlite` er nog niet in staat), zodat Apache de database weigert en `analytics.php` zelf bereikbaar blijft.
+
 ## Tabs
 
 - **Pagina-activiteit** (`web/index.php`): bezoeken per pagina en per gebruiker uit de `analytics.sqlite` van de andere apps.
@@ -41,6 +43,7 @@ Niet in git. Kopieer `web/auth_TEMPLATE.php` naar `web/auth.php` en vul `$allowe
 
 ```sh
 php tests/heatmap_range_test.php
+php tests/analytics_protect_test.php   # .htaccess voor analytics.sqlite
 node tests/heatmap_layout_smoke.js
 php tests/bc_usage_test.php
 php tests/bc_usage_mimir_format_test.php   # Users in Mímir-formaat (nl-NL captions, _x0020_, diagnose)
