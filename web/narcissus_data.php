@@ -606,6 +606,62 @@ function narcissus_chart_data(array $pages, string $from, string $to): array
 }
 
 /**
+ * Pageviews van vandaag (Europe/Amsterdam) per uur, opgeteld over alle pagina's.
+ * Telt rijen in `visits` (één rij = één pageview) per lokaal uur 0..23.
+ *
+ * @param list<array{id: string, name: string, path: string}> $pages
+ * @return array{date: string, now_hour: float, current_hour: int, labels: list<string>, data: list<int>, total: int}
+ */
+function narcissus_today_hourly(array $pages, ?DateTimeImmutable $now = null): array
+{
+    $tz = narcissus_timezone();
+    $now = ($now ?? new DateTimeImmutable('now', $tz))->setTimezone($tz);
+    $start = $now->setTime(0, 0, 0);
+    $end = $start->modify('+1 day');
+    $counts = array_fill(0, 24, 0);
+
+    foreach ($pages as $page) {
+        try {
+            $pdo = narcissus_pdo((string) $page['path']);
+            $statement = $pdo->prepare(
+                'SELECT visited_at
+                 FROM visits
+                 WHERE visited_at >= :from_ts AND visited_at < :to_ts'
+            );
+            $statement->execute([
+                ':from_ts' => $start->getTimestamp(),
+                ':to_ts' => min($end->getTimestamp(), $now->getTimestamp() + 1),
+            ]);
+            while ($row = $statement->fetch()) {
+                $timestamp = (int) ($row['visited_at'] ?? 0);
+                if ($timestamp <= 0) {
+                    continue;
+                }
+                $hour = (int) (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz)->format('G');
+                $counts[$hour]++;
+            }
+        } catch (Throwable) {
+            continue;
+        }
+    }
+
+    $currentHour = (int) $now->format('G');
+    $labels = [];
+    for ($hour = 0; $hour < 24; $hour++) {
+        $labels[] = sprintf('%02d:00', $hour);
+    }
+
+    return [
+        'date' => $start->format('Y-m-d'),
+        'now_hour' => round($currentHour + ((int) $now->format('i')) / 60, 3),
+        'current_hour' => $currentHour,
+        'labels' => $labels,
+        'data' => array_slice($counts, 0, $currentHour + 1),
+        'total' => array_sum($counts),
+    ];
+}
+
+/**
  * @return list<array{email: string, week: int, month: int, year?: int, last_seen: int, last_seen_label: string}>
  */
 function narcissus_user_stats(string $path, string $query = '', int $limit = 10, bool $includeYear = false): array
