@@ -51,7 +51,7 @@ $chartJson = json_encode($chart, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 $topJson = json_encode($topUsers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $todayJson = json_encode($today, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 if (!is_string($todayJson)) {
-    $todayJson = '{"labels":[],"data":[],"now_hour":0}';
+    $todayJson = '{"points":[],"now_minute":0,"bucket_minutes":5}';
 }
 if (!is_string($pagesJson)) {
     $pagesJson = '[]';
@@ -157,7 +157,7 @@ if (!is_string($topJson)) {
 
     <section class="narc-card">
         <h2>Vandaag</h2>
-        <p class="narc-status" id="narc-today-status">Pageviews per uur, alle pagina’s opgeteld.</p>
+        <p class="narc-status" id="narc-today-status">Pageviews per 5 minuten, alle pagina’s opgeteld.</p>
         <div class="narc-today-wrap">
             <canvas id="narc-today-chart"></canvas>
         </div>
@@ -661,9 +661,10 @@ if (!is_string($topJson)) {
                 data: item.data || [],
                 borderColor: color,
                 backgroundColor: color,
-                tension: 0.25,
+                tension: 0,
                 fill: false,
-                pointRadius: 2,
+                pointRadius: 0,
+                pointHitRadius: 4,
                 pointHoverRadius: 4,
                 borderWidth: 2
             };
@@ -881,9 +882,9 @@ if (!is_string($topJson)) {
     const todayStatus = document.getElementById('narc-today-status');
     let todayChart = null;
 
-    function hourLabel(value) {
-        const hour = Math.max(0, Math.min(24, Math.floor(Number(value))));
-        return String(hour).padStart(2, '0') + ':00';
+    function minuteLabel(value) {
+        const total = Math.max(0, Math.min(1440, Math.round(Number(value))));
+        return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
     }
 
     const nowLinePlugin = {
@@ -920,14 +921,14 @@ if (!is_string($topJson)) {
         if (!todayCanvas || typeof Chart === 'undefined') {
             return;
         }
-        const values = (payload && payload.data) ? payload.data : [];
-        const points = values.map(function (count, hour) {
-            return { x: hour, y: Number(count) || 0 };
+        const points = ((payload && payload.points) ? payload.points : []).map(function (point) {
+            return { x: Number(point.x) || 0, y: Number(point.y) || 0 };
         });
-        const nowHour = payload && typeof payload.now_hour === 'number' ? payload.now_hour : null;
+        const bucketMinutes = payload && payload.bucket_minutes ? Number(payload.bucket_minutes) : 5;
+        const nowMinute = payload && typeof payload.now_minute === 'number' ? payload.now_minute : null;
         if (todayStatus) {
             const total = payload && payload.total ? Number(payload.total) : 0;
-            todayStatus.textContent = 'Pageviews per uur, alle pagina’s opgeteld. Totaal vandaag: ' + total + '.';
+            todayStatus.textContent = 'Pageviews per ' + bucketMinutes + ' minuten, alle pagina’s opgeteld. Totaal vandaag: ' + total + '.';
         }
         const data = {
             datasets: [{
@@ -935,9 +936,10 @@ if (!is_string($topJson)) {
                 data: points,
                 borderColor: palette[0],
                 backgroundColor: palette[0] + '33',
-                pointRadius: 2,
+                pointRadius: 0,
+                pointHitRadius: 4,
                 borderWidth: 2,
-                tension: 0.25,
+                tension: 0,
                 fill: true
             }]
         };
@@ -947,15 +949,15 @@ if (!is_string($topJson)) {
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { display: false },
-                narcNowLine: { value: nowHour },
+                narcNowLine: { value: nowMinute },
                 tooltip: {
                     callbacks: {
                         title: function (items) {
                             if (!items.length) {
                                 return '';
                             }
-                            const hour = Number(items[0].parsed.x);
-                            return hourLabel(hour) + '–' + hourLabel(hour + 1);
+                            const start = Number(items[0].parsed.x);
+                            return minuteLabel(start) + '–' + minuteLabel(start + bucketMinutes);
                         }
                     }
                 }
@@ -964,8 +966,8 @@ if (!is_string($topJson)) {
                 x: {
                     type: 'linear',
                     min: 0,
-                    max: 24,
-                    ticks: { stepSize: 1, autoSkip: true, maxRotation: 0, callback: hourLabel },
+                    max: 1440,
+                    ticks: { stepSize: 60, autoSkip: true, maxRotation: 0, callback: minuteLabel },
                     grid: { display: false }
                 },
                 y: {
