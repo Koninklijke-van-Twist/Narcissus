@@ -605,20 +605,24 @@ function narcissus_chart_data(array $pages, string $from, string $to): array
     ];
 }
 
+const NARCISSUS_TODAY_BUCKET_MINUTES = 5;
+
 /**
- * Pageviews van vandaag (Europe/Amsterdam) per uur, opgeteld over alle pagina's.
- * Telt rijen in `visits` (één rij = één pageview) per lokaal uur 0..23.
+ * Pageviews van vandaag (Europe/Amsterdam) per 5 minuten, opgeteld over alle pagina's.
+ * Telt rijen in `visits` (één rij = één pageview). Bucket i = minuten [i*5, i*5+5) sinds 00:00 lokaal.
+ * `points` loopt t/m de bucket van nu; `x` is de bucketstart in minuten sinds middernacht.
  *
  * @param list<array{id: string, name: string, path: string}> $pages
- * @return array{date: string, now_hour: float, current_hour: int, labels: list<string>, data: list<int>, total: int}
+ * @return array{date: string, bucket_minutes: int, now_minute: int, points: list<array{x: int, y: int}>, total: int}
  */
 function narcissus_today_hourly(array $pages, ?DateTimeImmutable $now = null): array
 {
     $tz = narcissus_timezone();
     $now = ($now ?? new DateTimeImmutable('now', $tz))->setTimezone($tz);
     $start = $now->setTime(0, 0, 0);
-    $end = $start->modify('+1 day');
-    $counts = array_fill(0, 24, 0);
+    $bucket = NARCISSUS_TODAY_BUCKET_MINUTES;
+    $bucketCount = intdiv(24 * 60, $bucket);
+    $counts = array_fill(0, $bucketCount, 0);
 
     foreach ($pages as $page) {
         try {
@@ -626,37 +630,39 @@ function narcissus_today_hourly(array $pages, ?DateTimeImmutable $now = null): a
             $statement = $pdo->prepare(
                 'SELECT visited_at
                  FROM visits
-                 WHERE visited_at >= :from_ts AND visited_at < :to_ts'
+                 WHERE visited_at >= :from_ts AND visited_at <= :to_ts'
             );
             $statement->execute([
                 ':from_ts' => $start->getTimestamp(),
-                ':to_ts' => min($end->getTimestamp(), $now->getTimestamp() + 1),
+                ':to_ts' => $now->getTimestamp(),
             ]);
             while ($row = $statement->fetch()) {
                 $timestamp = (int) ($row['visited_at'] ?? 0);
                 if ($timestamp <= 0) {
                     continue;
                 }
-                $hour = (int) (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz)->format('G');
-                $counts[$hour]++;
+                $local = (new DateTimeImmutable('@' . $timestamp))->setTimezone($tz);
+                $minute = ((int) $local->format('G')) * 60 + (int) $local->format('i');
+                $index = min($bucketCount - 1, intdiv($minute, $bucket));
+                $counts[$index]++;
             }
         } catch (Throwable) {
             continue;
         }
     }
 
-    $currentHour = (int) $now->format('G');
-    $labels = [];
-    for ($hour = 0; $hour < 24; $hour++) {
-        $labels[] = sprintf('%02d:00', $hour);
+    $nowMinute = ((int) $now->format('G')) * 60 + (int) $now->format('i');
+    $lastIndex = min($bucketCount - 1, intdiv($nowMinute, $bucket));
+    $points = [];
+    for ($i = 0; $i <= $lastIndex; $i++) {
+        $points[] = ['x' => $i * $bucket, 'y' => $counts[$i]];
     }
 
     return [
         'date' => $start->format('Y-m-d'),
-        'now_hour' => round($currentHour + ((int) $now->format('i')) / 60, 3),
-        'current_hour' => $currentHour,
-        'labels' => $labels,
-        'data' => array_slice($counts, 0, $currentHour + 1),
+        'bucket_minutes' => $bucket,
+        'now_minute' => $nowMinute,
+        'points' => $points,
         'total' => array_sum($counts),
     ];
 }

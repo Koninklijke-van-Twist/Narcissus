@@ -5,9 +5,9 @@ require_once __DIR__ . '/../web/narcissus_data.php';
 $dir = sys_get_temp_dir() . '/narc_today_' . getmypid();
 @mkdir($dir);
 $tz = new DateTimeZone('Europe/Amsterdam');
-$now = new DateTimeImmutable('2026-10-22 17:20:00', $tz);
+$now = new DateTimeImmutable('2026-10-22 17:22:00', $tz);
 $pages = [];
-foreach (['a' => ['00:10', '09:05', '09:59', '17:01', '17:30'], 'b' => ['09:30', '23:00'], 'c' => []] as $name => $times) {
+foreach (['a' => ['00:00', '00:04', '09:05', '09:09', '17:21', '17:30'], 'b' => ['09:06', '23:00'], 'c' => []] as $name => $times) {
     $path = "$dir/$name.sqlite";
     @unlink($path);
     $pdo = new PDO('sqlite:' . $path);
@@ -24,16 +24,21 @@ foreach (['a' => ['00:10', '09:05', '09:59', '17:01', '17:30'], 'b' => ['09:30',
 $pages[] = ['id' => 'missing', 'name' => 'missing', 'path' => "$dir/nope/x.sqlite"];
 
 $r = narcissus_today_hourly($pages, $now);
+$byX = [];
+foreach ($r['points'] as $p) { $byX[$p['x']] = $p['y']; }
 $fail = 0;
 $check = function (bool $ok, string $msg) use (&$fail) { if (!$ok) { $fail++; echo "FAIL: $msg\n"; } };
 $check($r['date'] === '2026-10-22', 'date');
-$check(count($r['labels']) === 24, 'labels');
-$check(count($r['data']) === 18, 'data stopt bij huidig uur');
-$check($r['data'][0] === 1, 'uur 0');
-$check($r['data'][9] === 3, 'uur 9 opgeteld over apps');
-$check($r['data'][17] === 1, 'uur 17 (17:30 ligt na nu)');
-$check($r['total'] === 5, 'totaal zonder gisteren/toekomst');
-$check(abs($r['now_hour'] - 17.333) < 0.01, 'now_hour');
+$check($r['bucket_minutes'] === 5, 'bucket 5 min');
+$check(count($r['points']) === 17 * 12 + 5, 'punten t/m bucket van nu (17:20)');
+$check(end($r['points'])['x'] === 17 * 60 + 20, 'laatste bucket 17:20');
+$check($byX[0] === 2, '00:00-00:05');
+$check($byX[545] === 3 && $byX[540] === 0, '09:05 opgeteld over apps');
+$check($byX[1040] === 1, '17:20');
+$check($r['total'] === 6, 'totaal zonder gisteren/toekomst');
+$check($r['now_minute'] === 1042, 'now_minute');
+$full = narcissus_today_hourly($pages, new DateTimeImmutable('2026-10-22 23:59:30', $tz));
+$check(count($full['points']) === 288, '288 punten aan eind van de dag');
 array_map('unlink', glob("$dir/*.sqlite"));
 @rmdir($dir);
 echo $fail === 0 ? "OK\n" : "$fail failures\n";
