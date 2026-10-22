@@ -54,6 +54,13 @@ if ($action === 'pages') {
     ]);
 }
 
+if ($action === 'today') {
+    narcissus_json([
+        'ok' => true,
+        'today' => narcissus_today_hourly($pages),
+    ]);
+}
+
 if ($action === 'chart') {
     $from = narcissus_parse_date((string) ($_GET['from'] ?? ''));
     $to = narcissus_parse_date((string) ($_GET['to'] ?? ''));

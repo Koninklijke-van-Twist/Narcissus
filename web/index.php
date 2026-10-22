@@ -36,6 +36,7 @@ if ($selectedPage === null && $pages !== []) {
 }
 
 $chart = narcissus_chart_data($pages, $dateFrom, $dateTo);
+$today = narcissus_today_hourly($pages);
 $topUsers = $selectedPage === null ? [] : narcissus_top_users((string) $selectedPage['path'], 10);
 $heatmapIntensityMax = narcissus_heatmap_intensity_max();
 $heatmapOverLimitMultiplier = narcissus_heatmap_over_limit_multiplier();
@@ -48,6 +49,10 @@ $pagesJson = json_encode(array_map(static function (array $page): array {
 }, $pages), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $chartJson = json_encode($chart, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $topJson = json_encode($topUsers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+$todayJson = json_encode($today, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if (!is_string($todayJson)) {
+    $todayJson = '{"labels":[],"data":[],"now_hour":0}';
+}
 if (!is_string($pagesJson)) {
     $pagesJson = '[]';
 }
@@ -75,6 +80,7 @@ if (!is_string($topJson)) {
             gap: 18px;
         }
         .narc-chart-wrap { position: relative; height: 280px; width: 100%; margin-top: 12px; }
+        .narc-today-wrap { position: relative; height: 260px; width: 100%; margin-top: 12px; }
         .narc-chart-legend {
             display: flex;
             flex-wrap: wrap;
@@ -147,6 +153,14 @@ if (!is_string($topJson)) {
             </div>
             <div class="narc-chart-legend" id="narc-chart-legend"></div>
         <?php endif; ?>
+    </section>
+
+    <section class="narc-card">
+        <h2>Vandaag</h2>
+        <p class="narc-status" id="narc-today-status">Pageviews per uur, alle pagina’s opgeteld.</p>
+        <div class="narc-today-wrap">
+            <canvas id="narc-today-chart"></canvas>
+        </div>
     </section>
 
     <section class="narc-card">
@@ -258,6 +272,7 @@ if (!is_string($topJson)) {
     const pages = <?= $pagesJson ?>;
     const initialChart = <?= $chartJson ?>;
     const initialTop = <?= $topJson ?>;
+    const initialToday = <?= $todayJson ?>;
     let heatmapIntensityMax = <?= (int) $heatmapIntensityMax ?>;
     const heatmapOverLimitMultiplier = <?= (int) $heatmapOverLimitMultiplier ?>;
     const heatmapSvgPad = 1;
@@ -861,7 +876,127 @@ if (!is_string($topJson)) {
         }
     }
 
+
+    const todayCanvas = document.getElementById('narc-today-chart');
+    const todayStatus = document.getElementById('narc-today-status');
+    let todayChart = null;
+
+    function hourLabel(value) {
+        const hour = Math.max(0, Math.min(24, Math.floor(Number(value))));
+        return String(hour).padStart(2, '0') + ':00';
+    }
+
+    const nowLinePlugin = {
+        id: 'narcNowLine',
+        afterDatasetsDraw: function (chart, args, pluginOptions) {
+            const value = pluginOptions && typeof pluginOptions.value === 'number' ? pluginOptions.value : null;
+            const xScale = chart.scales.x;
+            const area = chart.chartArea;
+            if (value === null || !xScale || !area) {
+                return;
+            }
+            const x = xScale.getPixelForValue(value);
+            if (x < area.left || x > area.right) {
+                return;
+            }
+            const ctx = chart.ctx;
+            ctx.save();
+            ctx.strokeStyle = '#dc2626';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x, area.top);
+            ctx.lineTo(x, area.bottom);
+            ctx.stroke();
+            ctx.fillStyle = '#dc2626';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = x > area.right - 30 ? 'right' : 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText('Nu', x + (ctx.textAlign === 'right' ? -4 : 4), area.top + 2);
+            ctx.restore();
+        }
+    };
+
+    function renderToday(payload) {
+        if (!todayCanvas || typeof Chart === 'undefined') {
+            return;
+        }
+        const values = (payload && payload.data) ? payload.data : [];
+        const points = values.map(function (count, hour) {
+            return { x: hour, y: Number(count) || 0 };
+        });
+        const nowHour = payload && typeof payload.now_hour === 'number' ? payload.now_hour : null;
+        if (todayStatus) {
+            const total = payload && payload.total ? Number(payload.total) : 0;
+            todayStatus.textContent = 'Pageviews per uur, alle pagina’s opgeteld. Totaal vandaag: ' + total + '.';
+        }
+        const data = {
+            datasets: [{
+                label: 'Pageviews',
+                data: points,
+                borderColor: palette[0],
+                backgroundColor: palette[0] + '33',
+                pointRadius: 2,
+                borderWidth: 2,
+                tension: 0.25,
+                fill: true
+            }]
+        };
+        const options = {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                narcNowLine: { value: nowHour },
+                tooltip: {
+                    callbacks: {
+                        title: function (items) {
+                            if (!items.length) {
+                                return '';
+                            }
+                            const hour = Number(items[0].parsed.x);
+                            return hourLabel(hour) + '–' + hourLabel(hour + 1);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    min: 0,
+                    max: 24,
+                    ticks: { stepSize: 1, autoSkip: true, maxRotation: 0, callback: hourLabel },
+                    grid: { display: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { precision: 0 }
+                }
+            }
+        };
+        if (todayChart) {
+            todayChart.data = data;
+            todayChart.options = options;
+            todayChart.update();
+            return;
+        }
+        todayChart = new Chart(todayCanvas, { type: 'line', data: data, options: options, plugins: [nowLinePlugin] });
+    }
+
+    async function reloadToday() {
+        try {
+            const payload = await fetchJson(apiUrl('today'));
+            renderToday(payload.today || {});
+        } catch (error) {
+            if (todayStatus) {
+                todayStatus.textContent = error.message || 'Vandaag kon niet worden geladen.';
+            }
+        }
+    }
+
     renderChart(initialChart);
+    renderToday(initialToday);
+    window.setInterval(reloadToday, 5 * 60 * 1000);
     renderUsers(topBody, initialTop, false, pages.length ? 'Geen gebruikers gevonden voor deze pagina.' : 'Nog geen analytics-databases gevonden.');
     reloadHeatmap();
 
