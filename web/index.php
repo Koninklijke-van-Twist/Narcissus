@@ -51,7 +51,7 @@ $chartJson = json_encode($chart, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
 $topJson = json_encode($topUsers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 $todayJson = json_encode($today, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 if (!is_string($todayJson)) {
-    $todayJson = '{"points":[],"now_minute":0,"bucket_minutes":5}';
+    $todayJson = '{"points":[],"now_minute":0,"bucket_minutes":15}';
 }
 if (!is_string($pagesJson)) {
     $pagesJson = '[]';
@@ -157,7 +157,7 @@ if (!is_string($topJson)) {
 
     <section class="narc-card">
         <h2>Vandaag</h2>
-        <p class="narc-status" id="narc-today-status">Pageviews per 5 minuten, alle pagina’s opgeteld.</p>
+        <p class="narc-status" id="narc-today-status">Pageviews per 15 minuten, alle pagina’s opgeteld.</p>
         <div class="narc-today-wrap">
             <canvas id="narc-today-chart"></canvas>
         </div>
@@ -924,7 +924,7 @@ if (!is_string($topJson)) {
         const points = ((payload && payload.points) ? payload.points : []).map(function (point) {
             return { x: Number(point.x) || 0, y: Number(point.y) || 0 };
         });
-        const bucketMinutes = payload && payload.bucket_minutes ? Number(payload.bucket_minutes) : 5;
+        const bucketMinutes = payload && payload.bucket_minutes ? Number(payload.bucket_minutes) : 15;
         const nowMinute = payload && typeof payload.now_minute === 'number' ? payload.now_minute : null;
         if (todayStatus) {
             const total = payload && payload.total ? Number(payload.total) : 0;
@@ -956,8 +956,15 @@ if (!is_string($topJson)) {
                             if (!items.length) {
                                 return '';
                             }
-                            const start = Number(items[0].parsed.x);
-                            return minuteLabel(start) + '–' + minuteLabel(start + bucketMinutes);
+                            const x = Number(items[0].parsed.x);
+                            const start = x - (x % bucketMinutes);
+                            let end = start + bucketMinutes;
+                            if (x > start) {
+                                end = x;
+                            } else if (nowMinute !== null && end > nowMinute) {
+                                end = nowMinute;
+                            }
+                            return minuteLabel(start) + '–' + minuteLabel(end);
                         }
                     }
                 }

@@ -43,7 +43,7 @@ Niet in git. Kopieer `web/auth_TEMPLATE.php` naar `web/auth.php` en vul `$allowe
 
 ```sh
 php tests/heatmap_range_test.php
-php tests/today_hourly_test.php      # Vandaag: pageviews per 5 minuten
+php tests/today_hourly_test.php      # Vandaag: pageviews per 15 minuten
 php tests/analytics_protect_test.php   # .htaccess voor analytics.sqlite
 node tests/heatmap_layout_smoke.js
 php tests/bc_usage_test.php
