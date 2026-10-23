@@ -605,12 +605,13 @@ function narcissus_chart_data(array $pages, string $from, string $to): array
     ];
 }
 
-const NARCISSUS_TODAY_BUCKET_MINUTES = 5;
+const NARCISSUS_TODAY_BUCKET_MINUTES = 15;
 
 /**
- * Pageviews van vandaag (Europe/Amsterdam) per 5 minuten, opgeteld over alle pagina's.
- * Telt rijen in `visits` (één rij = één pageview). Bucket i = minuten [i*5, i*5+5) sinds 00:00 lokaal.
- * `points` loopt t/m de bucket van nu; `x` is de bucketstart in minuten sinds middernacht.
+ * Pageviews van vandaag (Europe/Amsterdam) per 15 minuten, opgeteld over alle pagina's.
+ * Telt rijen in `visits` (één rij = één pageview). Bucket i = minuten [i*15, i*15+15) sinds 00:00 lokaal.
+ * `points` loopt t/m de bucket van nu. `x` is de bucketstart; het laatste punt staat op nu
+ * (restant korter dan 15 min loopt niet door tot de volgende grens).
  *
  * @param list<array{id: string, name: string, path: string}> $pages
  * @return array{date: string, bucket_minutes: int, now_minute: int, points: list<array{x: int, y: int}>, total: int}
@@ -655,7 +656,7 @@ function narcissus_today_hourly(array $pages, ?DateTimeImmutable $now = null): a
     $lastIndex = min($bucketCount - 1, intdiv($nowMinute, $bucket));
     $points = [];
     for ($i = 0; $i <= $lastIndex; $i++) {
-        $points[] = ['x' => $i * $bucket, 'y' => $counts[$i]];
+        $points[] = ['x' => $i === $lastIndex ? $nowMinute : $i * $bucket, 'y' => $counts[$i]];
     }
 
     return [
